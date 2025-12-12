@@ -30,6 +30,17 @@ const pool = mysql.createPool({
   connectionLimit: 10,
 });
 
+// Test initial MySQL connection on startup
+pool.getConnection()
+  .then((conn) => {
+    console.log('✅ MySQL pool initial connection OK');
+    conn.release();
+  })
+  .catch((err) => {
+    console.error('❌ Error connecting MySQL pool on startup:', err);
+  });
+
+
 // ---------- CONSTANTS ----------
 const ALLOWED_LEVELS = ['3.0', '3.5', '4.0', '4.5'];
 const ALLOWED_LOCATIONS = [
