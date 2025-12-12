@@ -11,6 +11,16 @@ app.use(express.static('public'));
 // ---------- MYSQL CONNECTION ----------
 // Uses environment variables for cloud, defaults for local.
 const pool = mysql.createPool({
+
+  pool.getConnection()
+  .then((conn) => {
+    console.log('✅ MySQL pool initial connection OK');
+    conn.release();
+  })
+  .catch((err) => {
+    console.error('❌ Error connecting MySQL pool on startup:', err);
+  });
+  
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '@m3r1c4t3L!',
