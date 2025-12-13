@@ -33,6 +33,40 @@ pool.getConnection()
   });
 
 
+// Ensure AUTO_INCREMENT on id columns (useful for cloud DBs created without it)
+async function ensureAutoIncrement() {
+  const conn = await pool.getConnection();
+  try {
+    // Players.id
+    await conn.query(`
+      ALTER TABLE players
+      MODIFY COLUMN id INT NOT NULL AUTO_INCREMENT
+    `);
+
+    // Matches.id
+    await conn.query(`
+      ALTER TABLE matches
+      MODIFY COLUMN id INT NOT NULL AUTO_INCREMENT
+    `);
+
+    console.log('Ensured AUTO_INCREMENT on players.id and matches.id');
+  } catch (err) {
+    // Si ya están bien o aún no existen las tablas, solo logueamos
+    console.error(
+      'Error ensuring AUTO_INCREMENT:',
+      err && (err.code || err.sqlMessage || err.message || err)
+    );
+  } finally {
+    conn.release();
+  }
+}
+
+// Run fix once on startup (no bloqueamos el arranque)
+ensureAutoIncrement().catch((err) => {
+  console.error('Fatal error in ensureAutoIncrement:', err);
+});
+
+
 // ---------- CONSTANTS ----------
 const ALLOWED_LEVELS = ['3.0', '3.5', '4.0', '4.5'];
 const ALLOWED_LOCATIONS = [
