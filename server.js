@@ -11,64 +11,18 @@ app.use(express.static('public'));
 // ---------- MYSQL CONNECTION ----------
 // Uses environment variables for cloud, defaults for local.
 const pool = mysql.createPool({
-
-    
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
   password: process.env.DB_PASSWORD || '@m3r1c4t3L!',
   database: process.env.DB_NAME || 'tennis_ladder',
-  port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306, // <--- NUEVO
+  port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
   waitForConnections: true,
   connectionLimit: 10,
 });
 
-// Test initial MySQL connection on startup
-pool.getConnection()
-  .then((conn) => {
-    console.log('✅ MySQL pool initial connection OK');
-    conn.release();
-  })
-  .catch((err) => {
-    console.error('❌ Error connecting MySQL pool on startup:', err);
-  });
-
-
-// Ensure AUTO_INCREMENT on id columns (useful for cloud DBs created without it)
-async function ensureAutoIncrement() {
-  const conn = await pool.getConnection();
-  try {
-    // Players.id
-    await conn.query(`
-      ALTER TABLE players
-      MODIFY COLUMN id INT NOT NULL AUTO_INCREMENT
-    `);
-
-    // Matches.id
-    await conn.query(`
-      ALTER TABLE matches
-      MODIFY COLUMN id INT NOT NULL AUTO_INCREMENT
-    `);
-
-    console.log('Ensured AUTO_INCREMENT on players.id and matches.id');
-  } catch (err) {
-    // Si ya están bien o aún no existen las tablas, solo logueamos
-    console.error(
-      'Error ensuring AUTO_INCREMENT:',
-      err && (err.code || err.sqlMessage || err.message || err)
-    );
-  } finally {
-    conn.release();
-  }
-}
-
-// Run fix once on startup (no bloqueamos el arranque)
-ensureAutoIncrement().catch((err) => {
-  console.error('Fatal error in ensureAutoIncrement:', err);
-});
-
-
 // ---------- CONSTANTS ----------
 const ALLOWED_LEVELS = ['3.0', '3.5', '4.0', '4.5'];
+
 const ALLOWED_LOCATIONS = [
   'Lake Rim Park',
   'Hope Mills Municipal Park',
@@ -88,6 +42,19 @@ function isValidPhone(phone) {
   if (!phone) return true;
   const re = /^[0-9+\-\s()]+$/;
   return re.test(phone);
+}
+
+function normalizePhoneToUS(phone) {
+  if (!phone) return null;
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length < 10) {
+    return null;
+  }
+  const core = digits.slice(-10); // use last 10 digits
+  const part1 = core.slice(0, 3);
+  const part2 = core.slice(3, 6);
+  const part3 = core.slice(6);
+  return `${part1}-${part2}-${part3}`;
 }
 
 // Score: Sets 1 & 2 required; Set 3 optional but must be complete if used
@@ -117,37 +84,15 @@ function buildScoreFromBodySafe(body) {
       }
     }
 
-    if (!wRaw && !lRaw) {
-      continue;
-    }
-    if (!wRaw || !lRaw) {
-      return {
-        score: null,
-        error: `Score for Set ${i} is incomplete (both Winner and Loser need a value).`,
-      };
-    }
+    if (!wRaw && !lRaw) continue;
 
-    const w = Number(wRaw);
-    const l = Number(lRaw);
-    if (!Number.isInteger(w) || !Number.isInteger(l)) {
-      return {
-        score: null,
-        error: `Score for Set ${i} must be whole numbers.`,
-      };
-    }
+    const w = parseInt(wRaw, 10);
+    const l = parseInt(lRaw, 10);
 
-    const maxGames = i === 3 ? 20 : 10;
-    if (w < 0 || w > maxGames || l < 0 || l > maxGames) {
+    if (!Number.isInteger(w) || w < 0 || !Number.isInteger(l) || l < 0) {
       return {
         score: null,
-        error: `Score for Set ${i} must be between 0 and ${maxGames}.`,
-      };
-    }
-
-    if (w === 0 && l === 0) {
-      return {
-        score: null,
-        error: `Score for Set ${i} cannot be 0–0.`,
+        error: `Score for Set ${i} must be numeric and non-negative.`,
       };
     }
 
@@ -173,7 +118,7 @@ app.get('/', (req, res) => {
       <meta charset="utf-8">
       <title>Fayetteville Tennis Ladder</title>
       <meta name="viewport" content="width=device-width, initial-scale=1">
-      <style>
+            <style>
         :root {
           --hunter-green: #215e21;
           --hunter-green-dark: #174816;
@@ -408,7 +353,6 @@ app.get('/', (req, res) => {
   res.send(html);
 });
 
-
 // ---------- REGISTER PAGE ----------
 app.get('/register', (req, res) => {
   const html = `
@@ -429,11 +373,12 @@ app.get('/register', (req, res) => {
           font-family: Arial, sans-serif;
           background: #f3f4f6;
         }
+        /* HEADER */
         .site-header {
           background-image: url('/images/bg002.jpg');
           background-size: cover;
           background-position: center;
-          padding: 16px 20px;
+          padding: 12px 20px;
         }
         .header-inner {
           max-width: 960px;
@@ -442,16 +387,28 @@ app.get('/register', (req, res) => {
           align-items: center;
           gap: 16px;
         }
+        .header-logo-wrapper {
+          background: #ffffff;
+          border-radius: 14px;
+          padding: 4px 6px;
+          box-shadow: 0 3px 8px rgba(0,0,0,0.25);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
         .header-logo {
-          width: 70px;
+          width: 64px;
           height: auto;
-          border-radius: 8px;
-          box-shadow: 0 4px 8px rgba(0,0,0,0.25);
         }
         .header-text-main h1 {
           margin: 0;
-          font-size: 1.4rem;
-          color: var(--hunter-green);
+          font-size: 1.6rem;
+          color: var(--hunter-green);   /* HUNTER GREEN */
+        }
+        .header-subtitle {
+          font-size: 0.85rem;
+          color: var(--hunter-green);   /* HUNTER GREEN */
+          margin-top: 2px;
         }
         .main {
           max-width: 960px;
@@ -538,16 +495,43 @@ app.get('/register', (req, res) => {
       <script>
         function validateRegisterForm() {
           var form = document.getElementById('registerForm');
-          if (!form.player_name.value.trim()) {
+          var name = form.player_name.value.trim();
+          var phone = form.phone.value.trim();
+          var level = form.level.value;
+
+          if (!name) {
             alert('Player Name is required.');
             form.player_name.focus();
             return false;
           }
-          if (!form.level.value) {
+
+          if (!phone) {
+            alert('Cell Phone is required.');
+            form.phone.focus();
+            return false;
+          }
+
+          var digits = phone.replace(/\\D/g, '');
+          if (digits.length < 10) {
+            alert('Please enter a valid 10-digit phone number.');
+            form.phone.focus();
+            return false;
+          }
+
+          if (!level) {
             alert('Level is required.');
             form.level.focus();
             return false;
           }
+
+          var consent = confirm(
+            'Do we have your consent for your phone number to be shared and published on the FTL website?'
+          );
+          var consentField = document.getElementById('phone_consent');
+          if (consentField) {
+            consentField.value = consent ? 'yes' : 'no';
+          }
+
           return true;
         }
       </script>
@@ -555,9 +539,14 @@ app.get('/register', (req, res) => {
     <body>
       <header class="site-header">
         <div class="header-inner">
-          <img src="/images/FTL01.png" alt="FTL logo" class="header-logo">
+          <div class="header-logo-wrapper">
+            <img src="/images/FTL01.png" alt="Fayetteville Tennis Ladder logo" class="header-logo">
+          </div>
           <div class="header-text-main">
             <h1>Fayetteville Tennis Ladder</h1>
+            <div class="header-subtitle">
+              Players from Fayetteville and surrounding areas
+            </div>
           </div>
         </div>
       </header>
@@ -573,7 +562,7 @@ app.get('/register', (req, res) => {
             </div>
             <div class="form-field">
               <label for="phone">Cell Phone</label>
-              <input type="text" id="phone" name="phone" placeholder="Just Numbers">
+              <input type="text" id="phone" name="phone" placeholder="Just Numbers" required>
             </div>
             <div class="form-field">
               <label for="level">Level</label>
@@ -585,6 +574,7 @@ app.get('/register', (req, res) => {
                 <option value="4.5">4.5</option>
               </select>
             </div>
+            <input type="hidden" id="phone_consent" name="phone_consent" value="">
             <div class="buttons">
               <button type="submit" class="btn-primary">Save</button>
               <a href="/" style="text-decoration:none;">
@@ -604,16 +594,23 @@ app.get('/register', (req, res) => {
 
 app.post('/register', async (req, res) => {
   try {
-    let { player_name, phone, level } = req.body;
+    let { player_name, phone, level, phone_consent } = req.body;
 
     const name = sanitizeText(player_name, 100);
-    const phoneClean = sanitizeText(phone, 25);
+    const rawPhone = sanitizeText(phone, 25);
     const lvl = (level || '').trim();
+    const consent = (phone_consent || '').toLowerCase();
 
     if (!name) {
       return res
         .status(400)
         .send('Player Name is required. Please go back and complete the form.');
+    }
+
+    if (!rawPhone) {
+      return res
+        .status(400)
+        .send('Cell Phone is required. Please go back and complete the form.');
     }
 
     if (!ALLOWED_LEVELS.includes(lvl)) {
@@ -622,10 +619,23 @@ app.post('/register', async (req, res) => {
         .send('Invalid level. Allowed values: 3.0, 3.5, 4.0, 4.5.');
     }
 
-    if (phoneClean && !isValidPhone(phoneClean)) {
+    if (!isValidPhone(rawPhone)) {
       return res
         .status(400)
         .send('Invalid phone format. Only digits, spaces, +, -, and parentheses are allowed.');
+    }
+
+    let phoneToStore;
+    if (consent === 'no') {
+      phoneToStore = '000-000-0000';
+    } else {
+      const normalized = normalizePhoneToUS(rawPhone);
+      if (!normalized) {
+        return res
+          .status(400)
+          .send('Invalid phone number. Please enter a valid 10-digit phone number.');
+      }
+      phoneToStore = normalized;
     }
 
     const [[row]] = await pool.query(
@@ -635,7 +645,7 @@ app.post('/register', async (req, res) => {
 
     await pool.query(
       'INSERT INTO players (name, phone, level, ladder_rank) VALUES (?, ?, ?, ?)',
-      [name, phoneClean || null, lvl, nextRank]
+      [name, phoneToStore, lvl, nextRank]
     );
 
     res.redirect('/ladder');
@@ -667,40 +677,84 @@ app.get('/ladder', async (req, res) => {
           :root {
             --hunter-green: #215e21;
             --hunter-green-dark: #174816;
-            --row-even: #f9fafb;
-            --row-odd: #ffffff;
-            --border-soft: #d1d5db;
+            --hunter-green-light: #e5f5e5;
+            --border-soft: #e5e7eb;
           }
-          body { margin: 0; font-family: Arial, sans-serif; background: #f3f4f6; }
-          .site-header {
-            background-image: url('/images/bg002.jpg');
-            background-size: cover;
-            background-position: center;
-            padding: 16px 20px;
-          }
-          .header-inner {
-            max-width: 960px;
-            margin: 0 auto;
-            display: flex;
-            align-items: center;
-            gap: 16px;
-          }
-          .header-logo {
-            width: 70px;
-            height: auto;
-            border-radius: 8px;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.25);
-          }
-          .header-text-main h1 {
+          body {
             margin: 0;
-            font-size: 1.4rem;
-            color: var(--hunter-green);
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+              sans-serif;
+            background: #f3f4f6;
+            color: #111827;
           }
-
+          /* HEADER */
+        .site-header {
+          background-image: url('/images/bg002.jpg');
+          background-size: cover;
+          background-position: center;
+          padding: 12px 20px;
+        }
+        .header-inner {
+          max-width: 960px;
+          margin: 0 auto;
+          display: flex;
+          align-items: center;
+          gap: 16px;
+        }
+        .header-logo-wrapper {
+          background: #ffffff;
+          border-radius: 14px;
+          padding: 4px 6px;
+          box-shadow: 0 3px 8px rgba(0,0,0,0.25);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .header-logo {
+          width: 64px;
+          height: auto;
+        }
+        .header-text-main h1 {
+          margin: 0;
+          font-size: 1.6rem;
+          color: var(--hunter-green);   /* HUNTER GREEN */
+        }
+        .header-subtitle {
+          font-size: 0.85rem;
+          color: var(--hunter-green);   /* HUNTER GREEN */
+          margin-top: 2px;
+        }
           .main {
             max-width: 960px;
-            margin: 20px auto;
-            padding: 0 16px 24px;
+            margin: 0 auto;
+            padding: 16px;
+          }
+          .page-layout {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+          }
+          @media (min-width: 900px) {
+            .page-layout {
+              flex-direction: row;
+              align-items: flex-start;
+            }
+          }
+          .left-column {
+            flex: 1;
+            min-width: 260px;
+          }
+          .right-column {
+            flex: 1;
+            min-width: 260px;
+          }
+          .card {
+            background: #ffffff;
+            border-radius: 12px;
+            padding: 16px 14px;
+            box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+            border: 1px solid var(--border-soft);
+            margin-bottom: 16px;
           }
           h1.page-title {
             margin: 0 0 10px;
@@ -723,294 +777,270 @@ app.get('/ladder', async (req, res) => {
             flex-direction: column;
             margin-bottom: 10px;
           }
-          .form-field label {
-            font-weight: bold;
-            margin-bottom: 4px;
+          label {
+            font-size: 0.85rem;
+            margin-bottom: 3px;
+            color: #374151;
+            font-weight: 600;
           }
-          .form-field input,
-          .form-field select {
-            padding: 6px;
-            font-size: 0.95rem;
+          select, input[type="number"], input[type="text"], input[type="date"] {
+            padding: 7px 9px;
+            border-radius: 8px;
+            border: 1px solid #d1d5db;
+            font-size: 0.9rem;
+            outline: none;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
           }
-          .buttons { margin-top: 12px; }
-          button {
+          select:focus,
+          input[type="number"]:focus,
+          input[type="text"]:focus,
+          input[type="date"]:focus {
+            border-color: var(--hunter-green);
+            box-shadow: 0 0 0 1px rgba(33, 94, 33, 0.15);
+          }
+          .sets-grid {
+            display: grid;
+            grid-template-columns: auto 64px 64px;
+            gap: 4px 6px;
+            align-items: center;
+            font-size: 0.85rem;
+          }
+          .sets-grid-header {
+            font-weight: 600;
+            text-align: center;
+          }
+          .sets-grid-label {
+            font-weight: 500;
+          }
+          .sets-grid input[type="number"]{
+            width: 64px;
+            text-align: center;
+            padding: 6px 8px;   /* más compacto solo aquí */
+          }
+          .note {
+            font-size: 0.8rem;
+            color: #6b7280;
+            margin-top: 4px;
+          }
+          .buttons-row {
+            margin-top: 12px;
+          }
+          .btn-primary {
             padding: 8px 14px;
-            font-size: 0.95rem;
             border-radius: 999px;
             border: none;
             background: var(--hunter-green);
             color: #ffffff;
+            font-size: 0.9rem;
             font-weight: 600;
             cursor: pointer;
-            transition: background 0.18s ease;
+            transition: background 0.18s ease, transform 0.05s ease;
           }
-          button:hover {
+          .btn-primary:hover {
             background: var(--hunter-green-dark);
+            transform: translateY(-1px);
           }
-
           .table-wrapper {
-            width: 100%;
-            overflow-x: auto;
+            margin-top: 8px;
+            border-radius: 12px;
+            border: 1px solid var(--border-soft);
+            overflow: hidden;
+            background: #ffffff;
           }
           table {
-            border-collapse: collapse;
             width: 100%;
-            min-width: 400px;
-            margin-bottom: 20px;
-            background: #ffffff;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+            border-collapse: collapse;
+            font-size: 0.85rem;
           }
           thead {
             background: var(--hunter-green);
             color: #ffffff;
           }
-          th, td {
-            border: 1px solid var(--border-soft);
-            padding: 8px 10px;
-            text-align: center;
-            font-size: 0.9rem;
-          }
-          tbody tr:nth-child(odd) {
-            background: var(--row-odd);
+          thead th {
+            padding: 8px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 1px solid #d1d5db;
           }
           tbody tr:nth-child(even) {
-            background: var(--row-even);
+            background: #f9fafb;
           }
-
-          .score-grid { margin-top: 4px; }
-          .score-row {
-            display: flex;
-            align-items: center;
-            margin-bottom: 4px;
-          }
-          .score-label {
-            width: 115px;
-            font-size: 0.9rem;
-          }
-          .score-input {
-            width: 50px;
-            margin-right: 6px;
-            text-align: center;
-          }
-          .score-header .score-label {
-            visibility: hidden;
-          }
-          .set-number {
-            width: 50px;
-            text-align: center;
-            font-weight: bold;
-          }
-          .score-help {
-            font-size: 0.8rem;
-            color: #555;
-            margin-top: 4px;
-          }
-
-          @media (max-width: 480px) {
-            .form-container { padding: 10px; }
-            table { min-width: 360px; }
+          tbody td {
+            padding: 7px 8px;
+            border-bottom: 1px solid #e5e7eb;
           }
           .signature {
-            margin-top: 8px;
+            margin-top: 12px;
+            text-align: center;
             font-size: 0.7rem;
             color: #6b7280;
             font-weight: bold;
-            text-align: center;
           }
         </style>
-
-        <script>
-          function validateMatchForm() {
-            var form = document.getElementById('matchForm');
-
-            var date = form.match_date.value.trim();
-            var location = form.location.value;
-            var winner = form.winner_id.value;
-            var loser = form.loser_id.value;
-
-            if (!date) {
-              alert('Match Date is required.');
-              form.match_date.focus();
-              return false;
-            }
-
-            if (!location) {
-              alert('Location is required.');
-              form.location.focus();
-              return false;
-            }
-
-            if (!winner) {
-              alert('Winner is required.');
-              form.winner_id.focus();
-              return false;
-            }
-
-            if (!loser) {
-              alert('Loser is required.');
-              form.loser_id.focus();
-              return false;
-            }
-
-            if (winner === loser) {
-              alert('Winner and Loser must be different players.');
-              return false;
-            }
-
-            for (var i = 1; i <= 3; i++) {
-              var w = form['w_s' + i].value.trim();
-              var l = form['l_s' + i].value.trim();
-
-              if (i === 1 || i === 2) {
-                if (!w || !l) {
-                  alert('You must enter Winner and Loser games for Set ' + i + '.');
-                  return false;
-                }
-              } else {
-                if ((w && !l) || (!w && l)) {
-                  alert('Score for Set 3 is incomplete (both Winner and Loser need a value).');
-                  return false;
-                }
-              }
-            }
-
-            return true;
-          }
-        </script>
       </head>
       <body>
         <header class="site-header">
-          <div class="header-inner">
-            <img src="/images/FTL01.png" alt="FTL logo" class="header-logo">
-            <div class="header-text-main">
-              <h1>Fayetteville Tennis Ladder</h1>
+        <div class="header-inner">
+          <div class="header-logo-wrapper">
+            <img src="/images/FTL01.png" alt="Fayetteville Tennis Ladder logo" class="header-logo">
+          </div>
+          <div class="header-text-main">
+            <h1>Fayetteville Tennis Ladder</h1>
+            <div class="header-subtitle">
+              Players from Fayetteville and surrounding areas
             </div>
           </div>
-        </header>
+        </div>
+      </header>
 
         <main class="main">
-          <h1 class="page-title">Tennis Ladder</h1>
+          <div class="page-layout">
+            <div class="left-column">
+              <div class="card">
+                <h1 class="page-title">Report Match</h1>
+                <form method="POST" action="/report-match">
+                  <div class="form-field">
+                    <label for="match_date">Match Date</label>
+                    <input type="date" id="match_date" name="match_date" required>
+                  </div>
 
-          <h2>Report Match</h2>
-          <div class="form-container">
-            <form id="matchForm" method="POST" action="/matches" onsubmit="return validateMatchForm();">
-              <div class="form-field">
-                <label for="match_date">Match Date</label>
-                <input type="date" id="match_date" name="match_date" required>
+                  <div class="form-field">
+                    <label for="location">Location</label>
+                    <select id="location" name="location" required>
+                      <option value="">-- select location --</option>
+                      ${locationOptions}
+                    </select>
+                    <div class="note">
+                      (Location is required. If your court is not listed, please choose the closest available.)
+                    </div>
+                  </div>
+
+                  <div class="form-field">
+                    <label for="winner_id">Winner</label>
+                    <select id="winner_id" name="winner_id" required>
+                      <option value="">-- select winner --</option>
+                      ${players
+                        .map(
+                          (p) =>
+                            `<option value="${p.id}">${p.name} (Rank ${p.ladder_rank}, Level ${
+                              p.level || ''
+                            })</option>`
+                        )
+                        .join('')}
+                    </select>
+                  </div>
+
+                  <div class="form-field">
+                    <label for="loser_id">Loser</label>
+                    <select id="loser_id" name="loser_id" required>
+                      <option value="">-- select loser --</option>
+                      ${players
+                        .map(
+                          (p) =>
+                            `<option value="${p.id}">${p.name} (Rank ${p.ladder_rank}, Level ${
+                              p.level || ''
+                            })</option>`
+                        )
+                        .join('')}
+                    </select>
+                  </div>
+
+                  <div class="form-field">
+                    <label>Score (games per set)</label>
+                    <div class="sets-grid">
+                      <div></div>
+                      <div class="sets-grid-header">Winner</div>
+                      <div class="sets-grid-header">Loser</div>
+
+                      <div class="sets-grid-label">Set 1</div>
+                      <input type="number" name="w_s1" min="0" placeholder="6" required>
+                      <input type="number" name="l_s1" min="0" placeholder="4" required>
+
+                      <div class="sets-grid-label">Set 2</div>
+                      <input type="number" name="w_s2" min="0" placeholder="6" required>
+                      <input type="number" name="l_s2" min="0" placeholder="4" required>
+
+                      <div class="sets-grid-label">Set 3 (if played)</div>
+                      <input type="number" name="w_s3" min="0" placeholder="0">
+                      <input type="number" name="l_s3" min="0" placeholder="0">
+                    </div>
+                    <div class="note">
+                      Sets 1 and 2 are required. Set 3 is optional but must have both Winner and Loser games if used.
+                    </div>
+                  </div>
+
+                  <div class="buttons-row">
+                    <button type="submit" class="btn-primary">Accept</button>
+                  </div>
+                </form>
               </div>
+            </div>
 
-              <div class="form-field">
-                <label for="location">Location</label>
-                <select id="location" name="location" required>
-                  <option value="">-- select --</option>
-                  ${locationOptions}
-                </select>
-              </div>
-
-              <div class="form-field">
-                <label>Score (games per set)</label>
-                <div class="score-grid">
-                  <div class="score-row score-header">
-                    <span class="score-label">Set</span>
-                    <span class="set-number">1</span>
-                    <span class="set-number">2</span>
-                    <span class="set-number">3</span>
-                  </div>
-                  <div class="score-row">
-                    <span class="score-label">Winner games:</span>
-                    <input class="score-input" type="number" name="w_s1" min="0" max="10" placeholder="6">
-                    <input class="score-input" type="number" name="w_s2" min="0" max="10" placeholder="6">
-                    <input class="score-input" type="number" name="w_s3" min="0" max="20" placeholder="10">
-                  </div>
-                  <div class="score-row">
-                    <span class="score-label">Loser games:</span>
-                    <input class="score-input" type="number" name="l_s1" min="0" max="10" placeholder="3">
-                    <input class="score-input" type="number" name="l_s2" min="0" max="10" placeholder="4">
-                    <input class="score-input" type="number" name="l_s3" min="0" max="20" placeholder="8">
-                  </div>
-                  <div class="score-help">
-                    Sets 1 and 2 are required. Use Set 3 only if it was played (for example, a third-set tiebreak).
-                  </div>
+            <div class="right-column">
+              <div class="card">
+                <h2>Players (Ladder)</h2>
+                <div class="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Rank</th>
+                        <th>Player</th>
+                        <th>Level</th>
+                        <th>Phone</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                    ${players.map((p) => `
+                      <tr>
+                        <td>${p.ladder_rank}</td>
+                        <td>${p.name}</td>
+                        <td>${p.level || ''}</td>
+                        <td>${p.phone || ''}</td>
+                      </tr>`).join('')}
+                    </tbody>
+                  </table>
                 </div>
-              </div>
 
-              <div class="form-field">
-                <label for="winner_id">Winner</label>
-                <select id="winner_id" name="winner_id" required>
-                  <option value="">-- select --</option>
-                  ${players.map((p) => `<option value="${p.id}">${p.name}</option>`).join('')}
-                </select>
-              </div>
+                <p>
+                  <a href="/">Back to Home</a> |
+                  <a href="/matches">Match Log</a>
+                </p>
 
-              <div class="form-field">
-                <label for="loser_id">Loser</label>
-                <select id="loser_id" name="loser_id" required>
-                  <option value="">-- select --</option>
-                  ${players.map((p) => `<option value="${p.id}">${p.name}</option>`).join('')}
-                </select>
+                <div class="signature">Created by RER</div>
               </div>
-
-              <div class="buttons">
-                <button type="submit">Accept</button>
-              </div>
-            </form>
+            </div>
           </div>
-
-          <h2>Players (Ladder)</h2>
-          <div class="table-wrapper">
-            <table>
-              <thead>
-                <tr>
-                  <th>Rank</th>
-                  <th>Player</th>
-                  <th>Level</th>
-                </tr>
-              </thead>
-              <tbody>
-              ${players.map((p) => `
-                <tr>
-                  <td>${p.ladder_rank}</td>
-                  <td>${p.name}</td>
-                  <td>${p.level || ''}</td>
-                </tr>`).join('')}
-              </tbody>
-            </table>
-          </div>
-
-          <p>
-            <a href="/">Back to Home</a> |
-            <a href="/matches">Match Log</a>
-          </p>
-
-          <div class="signature">Created by RER</div>
         </main>
       </body>
       </html>
     `;
+
     res.send(html);
   } catch (err) {
     console.error(err);
-    res.status(500).send('Error loading ladder.');
+    res.status(500).send('Error loading ladder. Please try again later.');
   }
 });
 
-// ---------- SAVE MATCH + UPDATE RANKS ----------
-app.post('/matches', async (req, res) => {
+// ---------- REPORT MATCH ----------
+app.post('/report-match', async (req, res) => {
   try {
-    const rawDate = (req.body.match_date || '').trim();
-    const rawWinnerId = req.body.winner_id;
-    const rawLoserId = req.body.loser_id;
-    const rawLocation = (req.body.location || '').trim();
+    const {
+      match_date,
+      location,
+      winner_id: rawWinnerId,
+      loser_id: rawLoserId,
+    } = req.body;
 
-    if (!rawDate) {
-      return res.status(400).send('Match Date is required.');
+    const matchDateStr = (match_date || '').trim();
+    const rawLocation = (location || '').trim();
+
+    if (!matchDateStr) {
+      return res.status(400).send('Match date is required.');
     }
-
-    const matchDate = new Date(rawDate);
+    const matchDate = new Date(matchDateStr);
     if (Number.isNaN(matchDate.getTime())) {
-      return res.status(400).send('Invalid Match Date.');
+      return res.status(400).send('Invalid match date.');
     }
 
     if (!rawLocation) {
@@ -1030,135 +1060,122 @@ app.post('/matches', async (req, res) => {
     if (!Number.isInteger(loserId) || loserId <= 0) {
       return res.status(400).send('Invalid Loser player.');
     }
-
     if (winnerId === loserId) {
-      return res
-        .status(400)
-        .send('Winner and Loser must be different players.');
+      return res.status(400).send('Winner and Loser must be different players.');
     }
 
-    const { score, error: scoreError } = buildScoreFromBodySafe(req.body);
-    if (scoreError) {
-      return res.status(400).send(scoreError);
+    const { score, error } = buildScoreFromBodySafe(req.body);
+    if (error || !score) {
+      return res.status(400).send(error || 'Invalid score data.');
     }
 
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
 
-      const [rows] = await conn.query(
-        'SELECT id, ladder_rank FROM players WHERE id IN (?, ?) FOR UPDATE',
+      const [playerRows] = await conn.query(
+        'SELECT id, ladder_rank FROM players WHERE id IN (?, ?)',
         [winnerId, loserId]
       );
-      if (rows.length !== 2) {
-        throw new Error('One or both players not found in database.');
+      if (playerRows.length !== 2) {
+        throw new Error('Winner or Loser not found in the ladder.');
       }
 
-      const winner = rows.find((r) => r.id == winnerId);
-      const loser = rows.find((r) => r.id == loserId);
+      const winnerRow = playerRows.find((p) => p.id === winnerId);
+      const loserRow = playerRows.find((p) => p.id === loserId);
+      const winnerCurrentRank = winnerRow.ladder_rank;
+      const loserCurrentRank = loserRow.ladder_rank;
 
-      if (
-        !Number.isInteger(winner.ladder_rank) ||
-        !Number.isInteger(loser.ladder_rank)
-      ) {
-        throw new Error('One or both players do not have a valid ladder_rank.');
+      if (winnerCurrentRank > loserCurrentRank) {
+        throw new Error(
+          'Invalid ladder result: Winner is currently ranked below the loser. Please verify players and ranks.'
+        );
       }
 
-      let winnerOld = winner.ladder_rank;
-      let loserOld = loser.ladder_rank;
-      let winnerNew = winnerOld;
-      let loserNew = loserOld;
-
-      if (winnerOld > loserOld) {
-        winnerNew = loserOld;
-        loserNew = winnerOld;
-
-        await conn.query('UPDATE players SET ladder_rank = ? WHERE id = ?', [
-          winnerNew,
-          winnerId,
-        ]);
-        await conn.query('UPDATE players SET ladder_rank = ? WHERE id = ?', [
-          loserNew,
-          loserId,
-        ]);
+      if (winnerCurrentRank === loserCurrentRank) {
+        throw new Error(
+          'Invalid ladder result: Winner and loser cannot have the same rank.'
+        );
       }
 
       await conn.query(
-        `INSERT INTO matches
-          (match_date, location, score,
-           winner_id, loser_id,
-           winner_old_rank, winner_new_rank,
-           loser_old_rank, loser_new_rank)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `
+        UPDATE players
+        SET ladder_rank = ladder_rank + 1
+        WHERE ladder_rank >= ? AND ladder_rank < ?
+      `,
+        [winnerCurrentRank, loserCurrentRank]
+      );
+
+      await conn.query(
+        'UPDATE players SET ladder_rank = ? WHERE id = ?',
+        [winnerCurrentRank, loserId]
+      );
+
+      const winnerOldRank = winnerCurrentRank;
+      const loserOldRank = loserCurrentRank;
+      const winnerNewRank = winnerCurrentRank;
+      const loserNewRank = winnerCurrentRank + 1;
+
+      await conn.query(
+        `
+        INSERT INTO matches
+          (match_date, location, score, winner_id, loser_id,
+           winner_old_rank, winner_new_rank, loser_old_rank, loser_new_rank)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
         [
-          rawDate,
+          matchDateStr,
           rawLocation,
           score,
           winnerId,
           loserId,
-          winnerOld,
-          winnerNew,
-          loserOld,
-          loserNew,
+          winnerOldRank,
+          winnerNewRank,
+          loserOldRank,
+          loserNewRank,
         ]
       );
 
       await conn.commit();
-      res.redirect('/ladder');
     } catch (err) {
       await conn.rollback();
-      console.error(err);
-      res
-        .status(500)
-        .send(
-          'Error saving match. Please verify that players have a valid ladder rank and try again.'
-        );
+      throw err;
     } finally {
       conn.release();
     }
+
+    res.redirect('/matches');
   } catch (err) {
     console.error(err);
-    res.status(500).send('Unexpected error while saving the match.');
+    res
+      .status(500)
+      .send('Error reporting match. Please check the data or contact the administrator.');
   }
 });
 
-// ---------- MATCH LOG ----------
+// ---------- MATCH LOG PAGE ----------
 app.get('/matches', async (req, res) => {
   try {
     const [rows] = await pool.query(
-      `SELECT
-         m.*,
-         w.name AS winner_name,
-         l.name AS loser_name
-       FROM matches m
-       JOIN players w ON m.winner_id = w.id
-       JOIN players l ON m.loser_id = l.id
-       ORDER BY m.match_date ASC, m.id ASC`
+      `
+      SELECT
+        m.id,
+        DATE_FORMAT(m.match_date, '%Y-%m-%d') AS match_date,
+        m.location,
+        m.score,
+        w.name AS winner_name,
+        l.name AS loser_name,
+        m.winner_old_rank,
+        m.winner_new_rank,
+        m.loser_old_rank,
+        m.loser_new_rank
+      FROM matches m
+      JOIN players w ON m.winner_id = w.id
+      JOIN players l ON m.loser_id = l.id
+      ORDER BY m.match_date DESC, m.id DESC
+    `
     );
-
-    const htmlRows = rows
-      .map((m, idx) => {
-        let dateStr = '';
-        if (m.match_date instanceof Date) {
-          dateStr = m.match_date.toISOString().slice(0, 10);
-        } else if (typeof m.match_date === 'string') {
-          dateStr = m.match_date;
-        }
-        return `
-          <tr>
-            <td>${idx + 1}</td>
-            <td>${dateStr}</td>
-            <td>${m.winner_name}</td>
-            <td>${m.loser_name}</td>
-            <td>${m.location || ''}</td>
-            <td>${m.score || ''}</td>
-            <td>${m.winner_old_rank}</td>
-            <td>${m.winner_new_rank}</td>
-            <td>${m.loser_old_rank}</td>
-            <td>${m.loser_new_rank}</td>
-          </tr>`;
-      })
-      .join('');
 
     const html = `
       <!doctype html>
@@ -1170,113 +1187,166 @@ app.get('/matches', async (req, res) => {
         <style>
           :root {
             --hunter-green: #215e21;
-            --row-even: #f9fafb;
-            --row-odd: #ffffff;
-            --border-soft: #d1d5db;
+            --hunter-green-dark: #174816;
+            --hunter-green-light: #e5f5e5;
+            --border-soft: #e5e7eb;
           }
-          body { margin: 0; font-family: Arial, sans-serif; background: #f3f4f6; }
-          .site-header {
-            background-image: url('/images/bg002.jpg');
-            background-size: cover;
-            background-position: center;
-            padding: 16px 20px;
-          }
-          .header-inner {
-            max-width: 960px;
-            margin: 0 auto;
-            display: flex;
-            align-items: center;
-            gap: 16px;
-          }
-          .header-logo {
-            width: 70px;
-            height: auto;
-            border-radius: 8px;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.25);
-          }
-          .header-text-main h1 {
+          body {
             margin: 0;
-            font-size: 1.4rem;
-            color: var(--hunter-green);
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+              sans-serif;
+            background: #f3f4f6;
+            color: #111827;
           }
-
+          /* HEADER */
+        .site-header {
+          background-image: url('/images/bg002.jpg');
+          background-size: cover;
+          background-position: center;
+          padding: 12px 20px;
+        }
+        .header-inner {
+          max-width: 960px;
+          margin: 0 auto;
+          display: flex;
+          align-items: center;
+          gap: 16px;
+        }
+        .header-logo-wrapper {
+          background: #ffffff;
+          border-radius: 14px;
+          padding: 4px 6px;
+          box-shadow: 0 3px 8px rgba(0,0,0,0.25);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .header-logo {
+          width: 64px;
+          height: auto;
+        }
+        .header-text-main h1 {
+          margin: 0;
+          font-size: 1.6rem;
+          color: var(--hunter-green);   /* HUNTER GREEN */
+        }
+        .header-subtitle {
+          font-size: 0.85rem;
+          color: var(--hunter-green);   /* HUNTER GREEN */
+          margin-top: 2px;
+        }
           .main {
             max-width: 960px;
-            margin: 20px auto;
-            padding: 0 16px 24px;
+            margin: 0 auto;
+            padding: 16px;
           }
-
-          .table-wrapper { width: 100%; overflow-x: auto; }
-          table {
-            border-collapse: collapse;
-            width: 100%;
-            min-width: 500px;
+          .card {
             background: #ffffff;
-            border-radius: 8px;
+            border-radius: 12px;
+            padding: 16px 14px;
+            box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+            border: 1px solid var(--border-soft);
+          }
+          h1 {
+            margin-top: 0;
+            font-size: 1.4rem;
+          }
+          .table-wrapper {
+            margin-top: 8px;
+            border-radius: 12px;
+            border: 1px solid var(--border-soft);
             overflow: hidden;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+            background: #ffffff;
+          }
+          table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
           }
           thead {
             background: var(--hunter-green);
             color: #ffffff;
           }
-          th, td {
-            border: 1px solid var(--border-soft);
-            padding: 8px 10px;
-            text-align: center;
-            font-size: 0.9rem;
-          }
-          tbody tr:nth-child(odd) {
-            background: var(--row-odd);
+          thead th {
+            padding: 8px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 1px solid #d1d5db;
           }
           tbody tr:nth-child(even) {
-            background: var(--row-even);
+            background: #f9fafb;
+          }
+          tbody td {
+            padding: 7px 8px;
+            border-bottom: 1px solid #e5e7eb;
           }
           .signature {
-            margin-top: 8px;
+            margin-top: 12px;
+            text-align: center;
             font-size: 0.7rem;
             color: #6b7280;
             font-weight: bold;
-            text-align: center;
           }
         </style>
       </head>
       <body>
         <header class="site-header">
-          <div class="header-inner">
-            <img src="/images/FTL01.png" alt="FTL logo" class="header-logo">
-            <div class="header-text-main">
-              <h1>Fayetteville Tennis Ladder</h1>
+        <div class="header-inner">
+          <div class="header-logo-wrapper">
+            <img src="/images/FTL01.png" alt="Fayetteville Tennis Ladder logo" class="header-logo">
+          </div>
+          <div class="header-text-main">
+            <h1>Fayetteville Tennis Ladder</h1>
+            <div class="header-subtitle">
+              Players from Fayetteville and surrounding areas
             </div>
           </div>
-        </header>
+        </div>
+      </header>
 
         <main class="main">
-          <h1>Match Log</h1>
-          <p><a href="/">Back to Home</a> | <a href="/ladder">Ladder</a></p>
-          <div class="table-wrapper">
-            <table>
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Match Date</th>
-                  <th>Winner</th>
-                  <th>Loser</th>
-                  <th>Location</th>
-                  <th>Score</th>
-                  <th>Winner Old Rank</th>
-                  <th>Winner New Rank</th>
-                  <th>Loser Old Rank</th>
-                  <th>Loser New Rank</th>
-                </tr>
-              </thead>
-              <tbody>
-              ${htmlRows}
-              </tbody>
-            </table>
-          </div>
+          <div class="card">
+            <h1>Match Log</h1>
+            <div class="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Location</th>
+                    <th>Winner</th>
+                    <th>Loser</th>
+                    <th>Score</th>
+                    <th>Winner Rank (Old → New)</th>
+                    <th>Loser Rank (Old → New)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${rows
+                    .map(
+                      (m) => `
+                    <tr>
+                      <td>${m.match_date}</td>
+                      <td>${m.location}</td>
+                      <td>${m.winner_name}</td>
+                      <td>${m.loser_name}</td>
+                      <td>${m.score}</td>
+                      <td>${m.winner_old_rank} → ${m.winner_new_rank}</td>
+                      <td>${m.loser_old_rank} → ${m.loser_new_rank}</td>
+                    </tr>
+                  `
+                    )
+                    .join('')}
+                </tbody>
+              </table>
+            </div>
 
-          <div class="signature">Created by RER</div>
+            <p>
+              <a href="/">Back to Home</a> |
+              <a href="/ladder">Schedule Your Match / Enter Result</a>
+            </p>
+
+            <div class="signature">Created by RER</div>
+          </div>
         </main>
       </body>
       </html>
@@ -1284,7 +1354,7 @@ app.get('/matches', async (req, res) => {
     res.send(html);
   } catch (err) {
     console.error(err);
-    res.status(500).send('Error loading match log.');
+    res.status(500).send('Error loading match log. Please try again later.');
   }
 });
 
