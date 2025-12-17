@@ -1194,8 +1194,13 @@ app.post('/report-match', async (req, res) => {
 
       const winnerRow = playerRows.find((p) => p.id === winnerId);
       const loserRow = playerRows.find((p) => p.id === loserId);
-      const winnerCurrentRank = winnerRow.ladder_rank;
-      const loserCurrentRank = loserRow.ladder_rank;
+      const winnerCurrentRank = parseInt(winnerRow.ladder_rank, 10);
+      const loserCurrentRank = parseInt(loserRow.ladder_rank, 10);
+
+      if (!Number.isInteger(winnerCurrentRank) || !Number.isInteger(loserCurrentRank)) {
+        throw new Error('Invalid ladder ranks in database.');
+      }
+
 
       if (winnerCurrentRank > loserCurrentRank) {
         throw new Error(
