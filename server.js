@@ -1202,36 +1202,48 @@ app.post('/report-match', async (req, res) => {
       }
 
 
-      if (winnerCurrentRank > loserCurrentRank) {
-        throw new Error(
-          'Invalid ladder result: Winner is currently ranked below the loser. Please verify players and ranks.'
-        );
-      }
+      
 
       if (winnerCurrentRank === loserCurrentRank) {
         throw new Error(
           'Invalid ladder result: Winner and loser cannot have the same rank.'
         );
       }
-
-      await conn.query(
-        `
-        UPDATE players
-        SET ladder_rank = ladder_rank + 1
-        WHERE ladder_rank >= ? AND ladder_rank < ?
-      `,
-        [winnerCurrentRank, loserCurrentRank]
-      );
-
-      await conn.query(
-        'UPDATE players SET ladder_rank = ? WHERE id = ?',
-        [winnerCurrentRank, loserId]
-      );
-
+      
       const winnerOldRank = winnerCurrentRank;
-      const loserOldRank = loserCurrentRank;
-      const winnerNewRank = winnerCurrentRank;
-      const loserNewRank = winnerCurrentRank + 1;
+const loserOldRank  = loserCurrentRank;
+
+let winnerNewRank = winnerOldRank;
+let loserNewRank  = loserOldRank;
+
+/*
+  Regla:
+  - Si el winner ya estaba arriba (rank menor), NO cambia la ladder.
+  - Si el winner estaba abajo (rank mayor), el winner sube al rank del loser
+    y todos entre medio bajan 1.
+*/
+if (winnerCurrentRank > loserCurrentRank) {
+  // Baja 1 posición a todos los que estaban entre loserRank y winnerRank-1
+  await conn.query(
+    `
+    UPDATE players
+    SET ladder_rank = ladder_rank + 1
+    WHERE ladder_rank >= ? AND ladder_rank < ?
+    `,
+    [loserCurrentRank, winnerCurrentRank]
+  );
+
+  // Winner toma el lugar del loser
+  await conn.query(
+    'UPDATE players SET ladder_rank = ? WHERE id = ?',
+    [loserCurrentRank, winnerId]
+  );
+
+  winnerNewRank = loserCurrentRank;
+  loserNewRank  = loserCurrentRank + 1;
+}
+
+      
 
       await conn.query(
         `
