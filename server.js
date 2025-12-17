@@ -491,7 +491,63 @@ app.get('/register', (req, res) => {
           font-weight: bold;
           text-align: center;
         }
+                  .consent-modal-backdrop{
+          position: fixed;
+          inset: 0;
+          background: rgba(0,0,0,0.35);
+         display: none;                /* oculto por defecto */
+          align-items: center;
+          justify-content: center;
+         padding: 16px;
+         z-index: 9999;
+        }
+        .consent-modal{
+          width: 100%;
+          max-width: 420px;
+          background: #ffffff;
+          border-radius: 14px;
+          border: 1px solid #e5e7eb;
+          box-shadow: 0 12px 35px rgba(0,0,0,0.18);
+          padding: 16px 16px 14px;
+        }
+        .consent-title{
+          font-weight: 800;
+          text-align: center;
+          margin: 0 0 8px 0;
+        }
+        .consent-text{
+           margin: 0;
+          text-align: center;
+          font-size: 0.9rem;
+          color: #374151;
+          line-height: 1.35;
+        }
+        .consent-actions{
+          display: flex;
+          gap: 10px;
+          margin-top: 14px;
+        }
+        .consent-actions button{
+          flex: 1;
+          padding: 9px 12px;
+          border-radius: 999px;
+          border: none;
+          font-size: 0.9rem;
+          font-weight: 700;
+          cursor: pointer;
+        }
+        .consent-yes{
+          background: var(--hunter-green);
+          color: #ffffff;
+        }
+        .consent-no{
+          background: #e5e7eb;
+          color: #111827;
+        }
       </style>
+      
+
+
       <script>
         function validateRegisterForm() {
           var form = document.getElementById('registerForm');
@@ -524,13 +580,7 @@ app.get('/register', (req, res) => {
             return false;
           }
 
-          var consent = confirm(
-            'Do we have your consent for your phone number to be shared and published on the FTL website?'
-          );
-          var consentField = document.getElementById('phone_consent');
-          if (consentField) {
-            consentField.value = consent ? 'yes' : 'no';
-          }
+
 
           return true;
         }
@@ -583,9 +633,70 @@ app.get('/register', (req, res) => {
             </div>
           </form>
 
+          <div id="consentModal" class="consent-modal-backdrop" aria-hidden="true">
+            <div class="consent-modal" role="dialog" aria-modal="true">
+              <div class="consent-title">Consent</div>
+              <p class="consent-text">By clicking ‘Accept’, you consent to your phone number being shared on ftladder.com</p>
+
+              <div class="consent-actions">
+                <button type="button" id="consentYesBtn" class="consent-yes">Yes</button>
+                <button type="button" id="consentNoBtn" class="consent-no">No</button>
+              </div>
+            </div>
+          </div>
+
+
           <div class="signature">Created by RER</div>
         </div>
       </main>
+
+      <script>
+  (function () {
+    const form = document.getElementById('registerForm');
+    const modal = document.getElementById('consentModal');
+    const yesBtn = document.getElementById('consentYesBtn');
+    const noBtn  = document.getElementById('consentNoBtn');
+    const phoneInput = document.getElementById('phone');
+
+    // Campo oculto para enviar el consentimiento al POST /register
+    let consentInput = document.getElementById('phone_consent');
+    if (!consentInput) {
+      consentInput = document.createElement('input');
+      consentInput.type = 'hidden';
+      consentInput.name = 'phone_consent';
+consentInput.id = 'phone_consent';
+      consentInput.value = '';
+      form.appendChild(consentInput);
+    }
+
+    form.addEventListener('submit', function (e) {
+      // si ya eligió yes/no, dejamos que el form se envíe normal
+      if (consentInput.value === 'yes' || consentInput.value === 'no') return;
+
+      // si todavía no eligió, abrimos el modal
+      e.preventDefault();
+      modal.style.display = 'flex';
+      modal.setAttribute('aria-hidden', 'false');
+    });
+
+    yesBtn.addEventListener('click', function () {
+      consentInput.value = 'yes';
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      form.submit();
+    });
+
+    noBtn.addEventListener('click', function () {
+      consentInput.value = 'no';
+      modal.style.display = 'none';
+      modal.setAttribute('aria-hidden', 'true');
+      phoneInput.value = '000-000-0000';
+      form.requestSubmit();
+    });
+  })();
+</script>
+
+
     </body>
     </html>
   `;
