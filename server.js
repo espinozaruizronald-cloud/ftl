@@ -1183,32 +1183,88 @@ app.post('/report-match', async (req, res) => {
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
-
-      const [playerRows] = await conn.query(
-        'SELECT id, ladder_rank FROM players WHERE id IN (?, ?)',
-        [winnerId, loserId]
-      );
-      if (playerRows.length !== 2) {
-        throw new Error('Winner or Loser not found in the ladder.');
-      }
-
-      const winnerRow = playerRows.find((p) => p.id === winnerId);
-      const loserRow = playerRows.find((p) => p.id === loserId);
-      const winnerCurrentRank = parseInt(winnerRow.ladder_rank, 10);
-      const loserCurrentRank = parseInt(loserRow.ladder_rank, 10);
-
-      if (!Number.isInteger(winnerCurrentRank) || !Number.isInteger(loserCurrentRank)) {
-        throw new Error('Invalid ladder ranks in database.');
-      }
+      console.log('GLICKO2_ACTIVE_REPORT_MATCH', { winnerId, loserId, t: new Date().toISOString() });
 
 
-      
+const [playerRows] = await conn.query(
+  `SELECT id, ladder_rank, rating, rd, vol, wins, losses, matches_played
+   FROM players
+   WHERE id IN (?, ?)`,
+  [winnerId, loserId]
+);
 
-      if (winnerCurrentRank === loserCurrentRank) {
-        throw new Error(
-          'Invalid ladder result: Winner and loser cannot have the same rank.'
-        );
-      }
+if (playerRows.length !== 2) {
+  throw new Error('Winner or Loser not found in the ladder.');
+}
+
+const winnerRow = playerRows.find((p) => p.id === winnerId);
+const loserRow  = playerRows.find((p) => p.id === loserId);
+
+const winnerOldRank = parseInt(winnerRow.ladder_rank, 10);
+const loserOldRank  = parseInt(loserRow.ladder_rank, 10);
+
+if (!Number.isInteger(winnerOldRank) || !Number.isInteger(loserOldRank)) {
+  throw new Error('Invalid ladder ranks in database.');
+}
+
+if (winnerOldRank === loserOldRank) {
+  throw new Error('Invalid ladder result: Winner and loser cannot have the same rank.');
+}
+
+// 1) Actualizar rating/RD/vol con Glicko-2 (winner=1, loser=0)
+const winnerNew = glicko2UpdateSingle(winnerRow, loserRow, 1);
+const loserNew  = glicko2UpdateSingle(loserRow, winnerRow, 0);
+
+// 2) Guardar nuevos valores + stats
+await conn.query(
+  `
+  UPDATE players
+  SET rating = ?, rd = ?, vol = ?,
+      wins = COALESCE(wins,0) + 1,
+      matches_played = COALESCE(matches_played,0) + 1
+  WHERE id = ?
+  `,
+  [winnerNew.rating, winnerNew.rd, winnerNew.vol, winnerId]
+);
+
+await conn.query(
+  `
+  UPDATE players
+  SET rating = ?, rd = ?, vol = ?,
+      losses = COALESCE(losses,0) + 1,
+      matches_played = COALESCE(matches_played,0) + 1
+  WHERE id = ?
+  `,
+  [loserNew.rating, loserNew.rd, loserNew.vol, loserId]
+);
+
+// 3) Recalcular ladder_rank por rating (Rank real)
+const [rankRows] = await conn.query(
+  `
+  SELECT id
+  FROM players
+  ORDER BY
+    COALESCE(rating,1500) DESC,
+    COALESCE(rd,350) ASC,
+    COALESCE(wins,0) DESC,
+    COALESCE(matches_played,0) DESC,
+    id ASC
+  `
+);
+
+let winnerNewRank = winnerOldRank;
+let loserNewRank  = loserOldRank;
+
+for (let i = 0; i < rankRows.length; i++) {
+  const pid = rankRows[i].id;
+  const newRank = i + 1;
+
+  await conn.query('UPDATE players SET ladder_rank = ? WHERE id = ?', [newRank, pid]);
+
+  if (pid === winnerId) winnerNewRank = newRank;
+  if (pid === loserId) loserNewRank = newRank;
+}
+
       
       const winnerOldRank = winnerCurrentRank;
 const loserOldRank  = loserCurrentRank;
