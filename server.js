@@ -107,6 +107,93 @@ function buildScoreFromBodySafe(body) {
   }
 
   return { score: sets.join(' '), error: null };
+
+  // ---------- GLICKO-2 HELPERS ----------
+const GLICKO2_SCALE = 173.7178;
+const GLICKO2_DEFAULT = { rating: 1500, rd: 350, vol: 0.06 };
+const GLICKO2_TAU = 0.5;
+
+function glicko2UpdateSingle(player, opp, score01) {
+  const r = Number.isFinite(+player.rating) ? +player.rating : GLICKO2_DEFAULT.rating;
+  const rd = Number.isFinite(+player.rd) ? +player.rd : GLICKO2_DEFAULT.rd;
+  const sigma = Number.isFinite(+player.vol) ? +player.vol : GLICKO2_DEFAULT.vol;
+
+  const rj = Number.isFinite(+opp.rating) ? +opp.rating : GLICKO2_DEFAULT.rating;
+  const rdj = Number.isFinite(+opp.rd) ? +opp.rd : GLICKO2_DEFAULT.rd;
+
+  const mu = (r - 1500) / GLICKO2_SCALE;
+  const phi = rd / GLICKO2_SCALE;
+
+  const muJ = (rj - 1500) / GLICKO2_SCALE;
+  const phiJ = rdj / GLICKO2_SCALE;
+
+  const PI = Math.PI;
+  const g = 1 / Math.sqrt(1 + (3 * phiJ * phiJ) / (PI * PI));
+  const E = 1 / (1 + Math.exp(-g * (mu - muJ)));
+
+  const v = 1 / (g * g * E * (1 - E));
+  const delta = v * g * (score01 - E);
+
+  const a = Math.log(sigma * sigma);
+  const tau = GLICKO2_TAU;
+
+  function f(x) {
+    const ex = Math.exp(x);
+    const top = ex * (delta * delta - phi * phi - v - ex);
+    const bot = 2 * Math.pow(phi * phi + v + ex, 2);
+    return top / bot - (x - a) / (tau * tau);
+  }
+
+  let A = a;
+  let B;
+
+  if (delta * delta > phi * phi + v) {
+    B = Math.log(delta * delta - phi * phi - v);
+  } else {
+    let k = 1;
+    B = a - k * tau;
+    while (f(B) < 0) {
+      k += 1;
+      B = a - k * tau;
+    }
+  }
+
+  let fA = f(A);
+  let fB = f(B);
+  const EPS = 1e-6;
+
+  while (Math.abs(B - A) > EPS) {
+    const C = A + ((A - B) * fA) / (fB - fA);
+    const fC = f(C);
+
+    if (fC * fB < 0) {
+      A = B;
+      fA = fB;
+    } else {
+      fA = fA / 2;
+    }
+
+    B = C;
+    fB = fC;
+  }
+
+  const sigmaPrime = Math.exp(A / 2);
+
+  const phiStar = Math.sqrt(phi * phi + sigmaPrime * sigmaPrime);
+  const phiPrime = 1 / Math.sqrt(1 / (phiStar * phiStar) + 1 / v);
+
+  const muPrime = mu + (phiPrime * phiPrime) * g * (score01 - E);
+
+  let newRating = muPrime * GLICKO2_SCALE + 1500;
+  let newRD = phiPrime * GLICKO2_SCALE;
+
+  if (newRD > 350) newRD = 350;
+  if (newRD < 30) newRD = 30;
+
+  return { rating: newRating, rd: newRD, vol: sigmaPrime };
+}
+
+
 }
 
 // ---------- HOME / INDEX PAGE ----------
@@ -1133,9 +1220,6 @@ app.get('/ladder', async (req, res) => {
   }
 });
 
-
-
-
 // ---------- REPORT MATCH ----------
 app.post('/report-match', async (req, res) => {
   try {
@@ -1149,112 +1233,145 @@ app.post('/report-match', async (req, res) => {
     const matchDateStr = (match_date || '').trim();
     const rawLocation = (location || '').trim();
 
-    if (!matchDateStr) return res.status(400).send('Match date is required.');
+    if (!matchDateStr) {
+      return res.status(400).send('Match date is required.');
+    }
     const matchDate = new Date(matchDateStr);
-    if (Number.isNaN(matchDate.getTime())) return res.status(400).send('Invalid match date.');
+    if (Number.isNaN(matchDate.getTime())) {
+      return res.status(400).send('Invalid match date.');
+    }
 
-    if (!rawLocation) return res.status(400).send('Location is required.');
-    if (!ALLOWED_LOCATIONS.includes(rawLocation)) return res.status(400).send('Invalid location.');
+    if (!rawLocation) {
+      return res.status(400).send('Location is required.');
+    }
+
+    if (!ALLOWED_LOCATIONS.includes(rawLocation)) {
+      return res.status(400).send('Invalid location.');
+    }
 
     const winnerId = parseInt(rawWinnerId, 10);
-    const loserId  = parseInt(rawLoserId, 10);
+    const loserId = parseInt(rawLoserId, 10);
 
-    if (!Number.isInteger(winnerId) || winnerId <= 0) return res.status(400).send('Invalid Winner player.');
-    if (!Number.isInteger(loserId)  || loserId  <= 0) return res.status(400).send('Invalid Loser player.');
-    if (winnerId === loserId) return res.status(400).send('Winner and Loser must be different players.');
+    if (!Number.isInteger(winnerId) || winnerId <= 0) {
+      return res.status(400).send('Invalid Winner player.');
+    }
+    if (!Number.isInteger(loserId) || loserId <= 0) {
+      return res.status(400).send('Invalid Loser player.');
+    }
+    if (winnerId === loserId) {
+      return res.status(400).send('Winner and Loser must be different players.');
+    }
 
     const { score, error } = buildScoreFromBodySafe(req.body);
-    if (error || !score) return res.status(400).send(error || 'Invalid score data.');
+    if (error || !score) {
+      return res.status(400).send(error || 'Invalid score data.');
+    }
 
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
       console.log('GLICKO2_ACTIVE_REPORT_MATCH', { winnerId, loserId, t: new Date().toISOString() });
 
-      const [playerRows] = await conn.query(
-        `SELECT id, ladder_rank, rating, rd, vol, wins, losses, matches_played
-         FROM players
-         WHERE id IN (?, ?)`,
-        [winnerId, loserId]
-      );
 
-      if (playerRows.length !== 2) throw new Error('Winner or Loser not found in the ladder.');
+const [playerRows] = await conn.query(
+  `SELECT id, ladder_rank, rating, rd, vol, wins, losses, matches_played
+   FROM players
+   WHERE id IN (?, ?)`,
+  [winnerId, loserId]
+);
 
-      const winnerRow = playerRows.find((p) => p.id === winnerId);
-      const loserRow  = playerRows.find((p) => p.id === loserId);
+if (playerRows.length !== 2) {
+  throw new Error('Winner or Loser not found in the ladder.');
+}
 
-      const winnerOldRank = parseInt(winnerRow.ladder_rank, 10);
-      const loserOldRank  = parseInt(loserRow.ladder_rank, 10);
+const winnerRow = playerRows.find((p) => p.id === winnerId);
+const loserRow  = playerRows.find((p) => p.id === loserId);
 
-      if (!Number.isInteger(winnerOldRank) || !Number.isInteger(loserOldRank)) {
-        throw new Error('Invalid ladder ranks in database.');
-      }
-      if (winnerOldRank === loserOldRank) {
-        throw new Error('Invalid ladder result: Winner and loser cannot have the same rank.');
-      }
+const winnerOldRank = parseInt(winnerRow.ladder_rank, 10);
+const loserOldRank  = parseInt(loserRow.ladder_rank, 10);
 
-      // 1) Glicko-2 update (winner=1, loser=0)
-      const winnerNew = glicko2UpdateSingle(winnerRow, loserRow, 1);
-      const loserNew  = glicko2UpdateSingle(loserRow, winnerRow, 0);
+if (!Number.isInteger(winnerOldRank) || !Number.isInteger(loserOldRank)) {
+  throw new Error('Invalid ladder ranks in database.');
+}
 
-      // 2) Save new ratings + stats
-      await conn.query(
-        `
-        UPDATE players
-        SET rating = ?, rd = ?, vol = ?,
-            wins = COALESCE(wins,0) + 1,
-            matches_played = COALESCE(matches_played,0) + 1
-        WHERE id = ?
-        `,
-        [winnerNew.rating, winnerNew.rd, winnerNew.vol, winnerId]
-      );
+if (winnerOldRank === loserOldRank) {
+  throw new Error('Invalid ladder result: Winner and loser cannot have the same rank.');
+}
 
-      await conn.query(
-        `
-        UPDATE players
-        SET rating = ?, rd = ?, vol = ?,
-            losses = COALESCE(losses,0) + 1,
-            matches_played = COALESCE(matches_played,0) + 1
-        WHERE id = ?
-        `,
-        [loserNew.rating, loserNew.rd, loserNew.vol, loserId]
-      );
+// 1) Actualizar rating/RD/vol con Glicko-2 (winner=1, loser=0)
+const winnerNew = glicko2UpdateSingle(winnerRow, loserRow, 1);
+const loserNew  = glicko2UpdateSingle(loserRow, winnerRow, 0);
 
-      // 3) Recompute ladder_rank from rating
-      const [rankRows] = await conn.query(
-        `
-        SELECT id
-        FROM players
-        ORDER BY
-          COALESCE(rating,1500) DESC,
-          COALESCE(rd,350) ASC,
-          COALESCE(wins,0) DESC,
-          COALESCE(matches_played,0) DESC,
-          id ASC
-        `
-      );
+// 2) Guardar nuevos valores + stats
+await conn.query(
+  `
+  UPDATE players
+  SET rating = ?, rd = ?, vol = ?,
+      wins = COALESCE(wins,0) + 1,
+      matches_played = COALESCE(matches_played,0) + 1
+  WHERE id = ?
+  `,
+  [winnerNew.rating, winnerNew.rd, winnerNew.vol, winnerId]
+);
 
-      let winnerNewRank = winnerOldRank;
-      let loserNewRank  = loserOldRank;
+await conn.query(
+  `
+  UPDATE players
+  SET rating = ?, rd = ?, vol = ?,
+      losses = COALESCE(losses,0) + 1,
+      matches_played = COALESCE(matches_played,0) + 1
+  WHERE id = ?
+  `,
+  [loserNew.rating, loserNew.rd, loserNew.vol, loserId]
+);
 
-      for (let i = 0; i < rankRows.length; i++) {
-        const pid = rankRows[i].id;
-        const newRank = i + 1;
+// 3) Recalcular ladder_rank por rating (Rank real)
+const [rankRows] = await conn.query(
+  `
+  SELECT id
+  FROM players
+  ORDER BY
+    COALESCE(rating,1500) DESC,
+    COALESCE(rd,350) ASC,
+    COALESCE(wins,0) DESC,
+    COALESCE(matches_played,0) DESC,
+    id ASC
+  `
+);
 
-        await conn.query('UPDATE players SET ladder_rank = ? WHERE id = ?', [newRank, pid]);
+let winnerNewRank = winnerOldRank;
+let loserNewRank  = loserOldRank;
 
-        if (pid === winnerId) winnerNewRank = newRank;
-        if (pid === loserId)  loserNewRank  = newRank;
-      }
+for (let i = 0; i < rankRows.length; i++) {
+  const pid = rankRows[i].id;
+  const newRank = i + 1;
 
-      // 4) Insert match log
+  await conn.query('UPDATE players SET ladder_rank = ? WHERE id = ?', [newRank, pid]);
+
+  if (pid === winnerId) winnerNewRank = newRank;
+  if (pid === loserId) loserNewRank = newRank;
+}
+
+
+  // Winner toma el lugar del loser
+  await conn.query(
+    'UPDATE players SET ladder_rank = ? WHERE id = ?',
+    [loserCurrentRank, winnerId]
+  );
+
+  winnerNewRank = loserCurrentRank;
+  loserNewRank  = loserCurrentRank + 1;
+}
+
+      
+
       await conn.query(
         `
         INSERT INTO matches
           (match_date, location, score, winner_id, loser_id,
            winner_old_rank, winner_new_rank, loser_old_rank, loser_new_rank)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
+      `,
         [
           matchDateStr,
           rawLocation,
@@ -1269,21 +1386,21 @@ app.post('/report-match', async (req, res) => {
       );
 
       await conn.commit();
-      res.redirect('/matches');
     } catch (err) {
       await conn.rollback();
       throw err;
     } finally {
       conn.release();
     }
+
+    res.redirect('/matches');
   } catch (err) {
     console.error(err);
-    res.status(500).send('Error reporting match. Please check the data or contact the administrator.');
+    res
+      .status(500)
+      .send('Error reporting match. Please check the data or contact the administrator.');
   }
 });
-
-
-
 
 // ---------- MATCH LOG PAGE ----------
 app.get('/matches', async (req, res) => {
