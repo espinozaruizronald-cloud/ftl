@@ -1133,6 +1133,9 @@ app.get('/ladder', async (req, res) => {
   }
 });
 
+
+
+
 // ---------- REPORT MATCH ----------
 app.post('/report-match', async (req, res) => {
   try {
@@ -1146,168 +1149,112 @@ app.post('/report-match', async (req, res) => {
     const matchDateStr = (match_date || '').trim();
     const rawLocation = (location || '').trim();
 
-    if (!matchDateStr) {
-      return res.status(400).send('Match date is required.');
-    }
+    if (!matchDateStr) return res.status(400).send('Match date is required.');
     const matchDate = new Date(matchDateStr);
-    if (Number.isNaN(matchDate.getTime())) {
-      return res.status(400).send('Invalid match date.');
-    }
+    if (Number.isNaN(matchDate.getTime())) return res.status(400).send('Invalid match date.');
 
-    if (!rawLocation) {
-      return res.status(400).send('Location is required.');
-    }
-
-    if (!ALLOWED_LOCATIONS.includes(rawLocation)) {
-      return res.status(400).send('Invalid location.');
-    }
+    if (!rawLocation) return res.status(400).send('Location is required.');
+    if (!ALLOWED_LOCATIONS.includes(rawLocation)) return res.status(400).send('Invalid location.');
 
     const winnerId = parseInt(rawWinnerId, 10);
-    const loserId = parseInt(rawLoserId, 10);
+    const loserId  = parseInt(rawLoserId, 10);
 
-    if (!Number.isInteger(winnerId) || winnerId <= 0) {
-      return res.status(400).send('Invalid Winner player.');
-    }
-    if (!Number.isInteger(loserId) || loserId <= 0) {
-      return res.status(400).send('Invalid Loser player.');
-    }
-    if (winnerId === loserId) {
-      return res.status(400).send('Winner and Loser must be different players.');
-    }
+    if (!Number.isInteger(winnerId) || winnerId <= 0) return res.status(400).send('Invalid Winner player.');
+    if (!Number.isInteger(loserId)  || loserId  <= 0) return res.status(400).send('Invalid Loser player.');
+    if (winnerId === loserId) return res.status(400).send('Winner and Loser must be different players.');
 
     const { score, error } = buildScoreFromBodySafe(req.body);
-    if (error || !score) {
-      return res.status(400).send(error || 'Invalid score data.');
-    }
+    if (error || !score) return res.status(400).send(error || 'Invalid score data.');
 
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
       console.log('GLICKO2_ACTIVE_REPORT_MATCH', { winnerId, loserId, t: new Date().toISOString() });
 
+      const [playerRows] = await conn.query(
+        `SELECT id, ladder_rank, rating, rd, vol, wins, losses, matches_played
+         FROM players
+         WHERE id IN (?, ?)`,
+        [winnerId, loserId]
+      );
 
-const [playerRows] = await conn.query(
-  `SELECT id, ladder_rank, rating, rd, vol, wins, losses, matches_played
-   FROM players
-   WHERE id IN (?, ?)`,
-  [winnerId, loserId]
-);
+      if (playerRows.length !== 2) throw new Error('Winner or Loser not found in the ladder.');
 
-if (playerRows.length !== 2) {
-  throw new Error('Winner or Loser not found in the ladder.');
-}
+      const winnerRow = playerRows.find((p) => p.id === winnerId);
+      const loserRow  = playerRows.find((p) => p.id === loserId);
 
-const winnerRow = playerRows.find((p) => p.id === winnerId);
-const loserRow  = playerRows.find((p) => p.id === loserId);
+      const winnerOldRank = parseInt(winnerRow.ladder_rank, 10);
+      const loserOldRank  = parseInt(loserRow.ladder_rank, 10);
 
-const winnerOldRank = parseInt(winnerRow.ladder_rank, 10);
-const loserOldRank  = parseInt(loserRow.ladder_rank, 10);
+      if (!Number.isInteger(winnerOldRank) || !Number.isInteger(loserOldRank)) {
+        throw new Error('Invalid ladder ranks in database.');
+      }
+      if (winnerOldRank === loserOldRank) {
+        throw new Error('Invalid ladder result: Winner and loser cannot have the same rank.');
+      }
 
-if (!Number.isInteger(winnerOldRank) || !Number.isInteger(loserOldRank)) {
-  throw new Error('Invalid ladder ranks in database.');
-}
+      // 1) Glicko-2 update (winner=1, loser=0)
+      const winnerNew = glicko2UpdateSingle(winnerRow, loserRow, 1);
+      const loserNew  = glicko2UpdateSingle(loserRow, winnerRow, 0);
 
-if (winnerOldRank === loserOldRank) {
-  throw new Error('Invalid ladder result: Winner and loser cannot have the same rank.');
-}
+      // 2) Save new ratings + stats
+      await conn.query(
+        `
+        UPDATE players
+        SET rating = ?, rd = ?, vol = ?,
+            wins = COALESCE(wins,0) + 1,
+            matches_played = COALESCE(matches_played,0) + 1
+        WHERE id = ?
+        `,
+        [winnerNew.rating, winnerNew.rd, winnerNew.vol, winnerId]
+      );
 
-// 1) Actualizar rating/RD/vol con Glicko-2 (winner=1, loser=0)
-const winnerNew = glicko2UpdateSingle(winnerRow, loserRow, 1);
-const loserNew  = glicko2UpdateSingle(loserRow, winnerRow, 0);
+      await conn.query(
+        `
+        UPDATE players
+        SET rating = ?, rd = ?, vol = ?,
+            losses = COALESCE(losses,0) + 1,
+            matches_played = COALESCE(matches_played,0) + 1
+        WHERE id = ?
+        `,
+        [loserNew.rating, loserNew.rd, loserNew.vol, loserId]
+      );
 
-// 2) Guardar nuevos valores + stats
-await conn.query(
-  `
-  UPDATE players
-  SET rating = ?, rd = ?, vol = ?,
-      wins = COALESCE(wins,0) + 1,
-      matches_played = COALESCE(matches_played,0) + 1
-  WHERE id = ?
-  `,
-  [winnerNew.rating, winnerNew.rd, winnerNew.vol, winnerId]
-);
+      // 3) Recompute ladder_rank from rating
+      const [rankRows] = await conn.query(
+        `
+        SELECT id
+        FROM players
+        ORDER BY
+          COALESCE(rating,1500) DESC,
+          COALESCE(rd,350) ASC,
+          COALESCE(wins,0) DESC,
+          COALESCE(matches_played,0) DESC,
+          id ASC
+        `
+      );
 
-await conn.query(
-  `
-  UPDATE players
-  SET rating = ?, rd = ?, vol = ?,
-      losses = COALESCE(losses,0) + 1,
-      matches_played = COALESCE(matches_played,0) + 1
-  WHERE id = ?
-  `,
-  [loserNew.rating, loserNew.rd, loserNew.vol, loserId]
-);
+      let winnerNewRank = winnerOldRank;
+      let loserNewRank  = loserOldRank;
 
-// 3) Recalcular ladder_rank por rating (Rank real)
-const [rankRows] = await conn.query(
-  `
-  SELECT id
-  FROM players
-  ORDER BY
-    COALESCE(rating,1500) DESC,
-    COALESCE(rd,350) ASC,
-    COALESCE(wins,0) DESC,
-    COALESCE(matches_played,0) DESC,
-    id ASC
-  `
-);
+      for (let i = 0; i < rankRows.length; i++) {
+        const pid = rankRows[i].id;
+        const newRank = i + 1;
 
-let winnerNewRank = winnerOldRank;
-let loserNewRank  = loserOldRank;
+        await conn.query('UPDATE players SET ladder_rank = ? WHERE id = ?', [newRank, pid]);
 
-for (let i = 0; i < rankRows.length; i++) {
-  const pid = rankRows[i].id;
-  const newRank = i + 1;
+        if (pid === winnerId) winnerNewRank = newRank;
+        if (pid === loserId)  loserNewRank  = newRank;
+      }
 
-  await conn.query('UPDATE players SET ladder_rank = ? WHERE id = ?', [newRank, pid]);
-
-  if (pid === winnerId) winnerNewRank = newRank;
-  if (pid === loserId) loserNewRank = newRank;
-}
-
-      
-      const winnerOldRank = winnerCurrentRank;
-const loserOldRank  = loserCurrentRank;
-
-let winnerNewRank = winnerOldRank;
-let loserNewRank  = loserOldRank;
-
-/*
-  Regla:
-  - Si el winner ya estaba arriba (rank menor), NO cambia la ladder.
-  - Si el winner estaba abajo (rank mayor), el winner sube al rank del loser
-    y todos entre medio bajan 1.
-*/
-if (winnerCurrentRank > loserCurrentRank) {
-  // Baja 1 posición a todos los que estaban entre loserRank y winnerRank-1
-  await conn.query(
-    `
-    UPDATE players
-    SET ladder_rank = ladder_rank + 1
-    WHERE ladder_rank >= ? AND ladder_rank < ?
-    `,
-    [loserCurrentRank, winnerCurrentRank]
-  );
-
-  // Winner toma el lugar del loser
-  await conn.query(
-    'UPDATE players SET ladder_rank = ? WHERE id = ?',
-    [loserCurrentRank, winnerId]
-  );
-
-  winnerNewRank = loserCurrentRank;
-  loserNewRank  = loserCurrentRank + 1;
-}
-
-      
-
+      // 4) Insert match log
       await conn.query(
         `
         INSERT INTO matches
           (match_date, location, score, winner_id, loser_id,
            winner_old_rank, winner_new_rank, loser_old_rank, loser_new_rank)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
+        `,
         [
           matchDateStr,
           rawLocation,
@@ -1322,21 +1269,21 @@ if (winnerCurrentRank > loserCurrentRank) {
       );
 
       await conn.commit();
+      res.redirect('/matches');
     } catch (err) {
       await conn.rollback();
       throw err;
     } finally {
       conn.release();
     }
-
-    res.redirect('/matches');
   } catch (err) {
     console.error(err);
-    res
-      .status(500)
-      .send('Error reporting match. Please check the data or contact the administrator.');
+    res.status(500).send('Error reporting match. Please check the data or contact the administrator.');
   }
 });
+
+
+
 
 // ---------- MATCH LOG PAGE ----------
 app.get('/matches', async (req, res) => {
