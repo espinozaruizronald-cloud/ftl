@@ -1,9 +1,30 @@
 const express = require('express');
 const mysql = require('mysql2/promise');
 const app = express();
+const session = require('express-session');
+const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 
 // Parse HTML form data
 app.use(express.urlencoded({ extended: true }));
+
+app.set('trust proxy', 1);
+
+app.use(
+  session({
+    name: 'ftl_sid',
+    secret: process.env.SESSION_SECRET || 'dev-unsafe-change-me',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: 1000 * 60 * 60 * 24 * 14, // 14 días
+    },
+  })
+);
+
 
 // Serve static files from "public" (for images, css, etc.)
 app.use(express.static('public'));
@@ -19,6 +40,44 @@ const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 10,
 });
+
+
+// ---------- TEMPORAL ----------
+console.log('ENV DB_HOST:', process.env.DB_HOST);
+console.log('ENV DB_NAME:', process.env.DB_NAME);
+
+pool.query("SELECT @@hostname AS host, @@port AS port, USER() AS user, DATABASE() AS db")
+  .then(([rows]) => console.log('✅ DB server:', rows[0]))
+  .catch((err) => console.error('❌ DB server check failed:', err));
+
+// ------------------------------
+
+
+pool.query('SELECT DATABASE() AS db')
+  .then(([rows]) => console.log('✅ Connected DB:', rows[0].db))
+  .catch((err) => console.error('❌ DB check failed:', err));
+
+pool.query("SHOW COLUMNS FROM players LIKE 'phone_consent'")
+  .then(([rows]) => console.log('✅ phone_consent column:', rows))
+  .catch((err) => console.error('❌ SHOW COLUMNS failed:', err));
+
+
+async function ensureUsersTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id VARCHAR(36) NOT NULL,
+      email VARCHAR(255) NOT NULL,
+      password_hash VARCHAR(255) NOT NULL,
+      PRIMARY KEY (id),
+      UNIQUE KEY users_email_unique (email)
+    )
+  `);
+}
+
+ensureUsersTable().catch((err) => {
+  console.error('ensureUsersTable failed:', err);
+});
+
 
 // ---------- CONSTANTS ----------
 const ALLOWED_LEVELS = ['3.0', '3.5', '4.0', '4.5'];
@@ -107,94 +166,133 @@ function buildScoreFromBodySafe(body) {
   }
 
   return { score: sets.join(' '), error: null };
-
-  // ---------- GLICKO-2 HELPERS ----------
-const GLICKO2_SCALE = 173.7178;
-const GLICKO2_DEFAULT = { rating: 1500, rd: 350, vol: 0.06 };
-const GLICKO2_TAU = 0.5;
-
-function glicko2UpdateSingle(player, opp, score01) {
-  const r = Number.isFinite(+player.rating) ? +player.rating : GLICKO2_DEFAULT.rating;
-  const rd = Number.isFinite(+player.rd) ? +player.rd : GLICKO2_DEFAULT.rd;
-  const sigma = Number.isFinite(+player.vol) ? +player.vol : GLICKO2_DEFAULT.vol;
-
-  const rj = Number.isFinite(+opp.rating) ? +opp.rating : GLICKO2_DEFAULT.rating;
-  const rdj = Number.isFinite(+opp.rd) ? +opp.rd : GLICKO2_DEFAULT.rd;
-
-  const mu = (r - 1500) / GLICKO2_SCALE;
-  const phi = rd / GLICKO2_SCALE;
-
-  const muJ = (rj - 1500) / GLICKO2_SCALE;
-  const phiJ = rdj / GLICKO2_SCALE;
-
-  const PI = Math.PI;
-  const g = 1 / Math.sqrt(1 + (3 * phiJ * phiJ) / (PI * PI));
-  const E = 1 / (1 + Math.exp(-g * (mu - muJ)));
-
-  const v = 1 / (g * g * E * (1 - E));
-  const delta = v * g * (score01 - E);
-
-  const a = Math.log(sigma * sigma);
-  const tau = GLICKO2_TAU;
-
-  function f(x) {
-    const ex = Math.exp(x);
-    const top = ex * (delta * delta - phi * phi - v - ex);
-    const bot = 2 * Math.pow(phi * phi + v + ex, 2);
-    return top / bot - (x - a) / (tau * tau);
-  }
-
-  let A = a;
-  let B;
-
-  if (delta * delta > phi * phi + v) {
-    B = Math.log(delta * delta - phi * phi - v);
-  } else {
-    let k = 1;
-    B = a - k * tau;
-    while (f(B) < 0) {
-      k += 1;
-      B = a - k * tau;
-    }
-  }
-
-  let fA = f(A);
-  let fB = f(B);
-  const EPS = 1e-6;
-
-  while (Math.abs(B - A) > EPS) {
-    const C = A + ((A - B) * fA) / (fB - fA);
-    const fC = f(C);
-
-    if (fC * fB < 0) {
-      A = B;
-      fA = fB;
-    } else {
-      fA = fA / 2;
-    }
-
-    B = C;
-    fB = fC;
-  }
-
-  const sigmaPrime = Math.exp(A / 2);
-
-  const phiStar = Math.sqrt(phi * phi + sigmaPrime * sigmaPrime);
-  const phiPrime = 1 / Math.sqrt(1 / (phiStar * phiStar) + 1 / v);
-
-  const muPrime = mu + (phiPrime * phiPrime) * g * (score01 - E);
-
-  let newRating = muPrime * GLICKO2_SCALE + 1500;
-  let newRD = phiPrime * GLICKO2_SCALE;
-
-  if (newRD > 350) newRD = 350;
-  if (newRD < 30) newRD = 30;
-
-  return { rating: newRating, rd: newRD, vol: sigmaPrime };
 }
 
 
+function isLoggedIn(req) {
+  return Boolean(req.session && req.session.userId);
 }
+
+function safeNext(next) {
+  if (!next || typeof next !== 'string') return '/ladder';
+  if (!next.startsWith('/')) return '/ladder';
+  if (next.startsWith('//')) return '/ladder';
+  return next;
+}
+
+// ---------- SIGNUP ----------
+app.get('/signup', (req, res) => {
+  const next = safeNext(req.query.next);
+  res.send(`
+    <!doctype html>
+    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Create Account</title></head>
+    <body style="font-family:Arial;margin:24px;">
+      <h2>Create Account</h2>
+      <form method="POST" action="/signup?next=${encodeURIComponent(next)}">
+        <div style="margin-bottom:10px;">
+          <label>Email</label><br>
+          <input name="email" type="email" required style="padding:8px;width:320px;max-width:100%;">
+        </div>
+        <div style="margin-bottom:10px;">
+          <label>Password</label><br>
+          <input name="password" type="password" required minlength="8" style="padding:8px;width:320px;max-width:100%;">
+        </div>
+        <button type="submit" style="padding:10px 14px;">Create</button>
+        <a href="/login?next=${encodeURIComponent(next)}" style="margin-left:10px;">I already have an account</a>
+      </form>
+    </body></html>
+  `);
+});
+
+app.post('/signup', async (req, res) => {
+  try {
+    const next = safeNext(req.query.next);
+    const email = (req.body.email || '').trim().toLowerCase();
+    const password = (req.body.password || '').trim();
+
+    if (!email) return res.status(400).send('Email is required.');
+    if (password.length < 8) return res.status(400).send('Password must be at least 8 characters.');
+
+    const [[existing]] = await pool.query('SELECT id FROM users WHERE email = ? LIMIT 1', [email]);
+    if (existing) return res.status(409).send('Email already registered.');
+
+    const id = crypto.randomUUID();
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    await pool.query(
+      'INSERT INTO users (id, email, password_hash) VALUES (?, ?, ?)',
+      [id, email, passwordHash]
+    );
+
+    req.session.userId = id;
+    req.session.email = email;
+
+    res.redirect(next);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Error creating account.');
+  }
+});
+
+// ---------- LOGIN ----------
+app.get('/login', (req, res) => {
+  const next = safeNext(req.query.next);
+  res.send(`
+    <!doctype html>
+    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Login</title></head>
+    <body style="font-family:Arial;margin:24px;">
+      <h2>Login</h2>
+      <form method="POST" action="/login?next=${encodeURIComponent(next)}">
+        <div style="margin-bottom:10px;">
+          <label>Email</label><br>
+          <input name="email" type="email" required style="padding:8px;width:320px;max-width:100%;">
+        </div>
+        <div style="margin-bottom:10px;">
+          <label>Password</label><br>
+          <input name="password" type="password" required style="padding:8px;width:320px;max-width:100%;">
+        </div>
+        <button type="submit" style="padding:10px 14px;">Login</button>
+        <a href="/signup?next=${encodeURIComponent(next)}" style="margin-left:10px;">Create account</a>
+      </form>
+    </body></html>
+  `);
+});
+
+app.post('/login', async (req, res) => {
+  try {
+    const next = safeNext(req.query.next);
+    const email = (req.body.email || '').trim().toLowerCase();
+    const password = (req.body.password || '').trim();
+
+    const [rows] = await pool.query(
+      'SELECT id, password_hash FROM users WHERE email = ? LIMIT 1',
+      [email]
+    );
+    if (!rows.length) return res.status(401).send('Invalid email or password.');
+
+    const user = rows[0];
+    const ok = await bcrypt.compare(password, user.password_hash);
+    if (!ok) return res.status(401).send('Invalid email or password.');
+
+    req.session.userId = user.id;
+    req.session.email = email;
+
+    res.redirect(next);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Error logging in.');
+  }
+});
+
+// ---------- LOGOUT ----------
+app.get('/logout', (req, res) => {
+  req.session.destroy(() => {
+    res.redirect('/');
+  });
+});
+
 
 // ---------- HOME / INDEX PAGE ----------
 app.get('/', (req, res) => {
@@ -777,7 +875,6 @@ consentInput.id = 'phone_consent';
       consentInput.value = 'no';
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
-      phoneInput.value = '000-000-0000';
       form.requestSubmit();
     });
   })();
@@ -823,28 +920,31 @@ app.post('/register', async (req, res) => {
         .send('Invalid phone format. Only digits, spaces, +, -, and parentheses are allowed.');
     }
 
-    let phoneToStore;
-    if (consent === 'no') {
-      phoneToStore = '000-000-0000';
-    } else {
-      const normalized = normalizePhoneToUS(rawPhone);
-      if (!normalized) {
-        return res
-          .status(400)
-          .send('Invalid phone number. Please enter a valid 10-digit phone number.');
-      }
-      phoneToStore = normalized;
+    const normalized = normalizePhoneToUS(rawPhone);
+    if (!normalized) {
+      return res
+        .status(400)
+        .send('Invalid phone number. Please enter a valid 10-digit phone number.');
     }
+
+    // Siempre guardamos el teléfono real (normalizado)
+    const phoneToStore = normalized;
+
+    // Consentimiento: solo 1 si explícitamente llegó "yes"; cualquier otro caso = 0
+    
 
     const [[row]] = await pool.query(
       'SELECT COALESCE(MAX(ladder_rank), 0) + 1 AS next_rank FROM players'
     );
     const nextRank = row.next_rank || 1;
 
+    const phoneConsentFlag = consent === 'yes' ? 1 : 0;
+
     await pool.query(
-      'INSERT INTO players (name, phone, level, ladder_rank) VALUES (?, ?, ?, ?)',
-      [name, phoneToStore, lvl, nextRank]
+      'INSERT INTO players (name, phone, level, ladder_rank, phone_consent) VALUES (?, ?, ?, ?, ?)',
+      [name, phoneToStore, lvl, nextRank, phoneConsentFlag]
     );
+
 
     res.redirect('/ladder');
   } catch (err) {
@@ -859,6 +959,8 @@ app.get('/ladder', async (req, res) => {
     const [players] = await pool.query(
       'SELECT * FROM players ORDER BY ladder_rank ASC'
     );
+
+    const loggedIn = isLoggedIn(req);
 
     const locationOptions = ALLOWED_LOCATIONS
       .map((loc) => `<option value="${loc}">${loc}</option>`)
@@ -1188,13 +1290,24 @@ app.get('/ladder', async (req, res) => {
                       </tr>
                     </thead>
                     <tbody>
-                    ${players.map((p) => `
-                      <tr>
-                        <td>${p.ladder_rank}</td>
-                        <td>${p.name}</td>
-                        <td>${p.level || ''}</td>
-                        <td>${p.phone || ''}</td>
-                      </tr>`).join('')}
+                    ${players
+                      .map((p) => {
+                        const phoneCell = !loggedIn
+                          ? `<a href="/login?next=/ladder">Login to view</a>`
+                          : (Number(p.phone_consent) === 1 ? (p.phone || '') : '(private)');
+
+
+                        return `
+                        <tr>
+                            <td>${p.ladder_rank}</td>
+                            <td>${p.name}</td>
+                            <td>${p.level || ''}</td>
+                            <td>${phoneCell}</td>
+                          </tr>
+                        `;
+                      })
+                      .join('')}
+
                     </tbody>
                   </table>
                 </div>
@@ -1270,88 +1383,55 @@ app.post('/report-match', async (req, res) => {
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
-      console.log('GLICKO2_ACTIVE_REPORT_MATCH', { winnerId, loserId, t: new Date().toISOString() });
+
+      const [playerRows] = await conn.query(
+        'SELECT id, ladder_rank FROM players WHERE id IN (?, ?)',
+        [winnerId, loserId]
+      );
+      if (playerRows.length !== 2) {
+        throw new Error('Winner or Loser not found in the ladder.');
+      }
+
+      const winnerRow = playerRows.find((p) => p.id === winnerId);
+      const loserRow = playerRows.find((p) => p.id === loserId);
+      const winnerCurrentRank = parseInt(winnerRow.ladder_rank, 10);
+      const loserCurrentRank = parseInt(loserRow.ladder_rank, 10);
+
+      if (!Number.isInteger(winnerCurrentRank) || !Number.isInteger(loserCurrentRank)) {
+        throw new Error('Invalid ladder ranks in database.');
+      }
 
 
-const [playerRows] = await conn.query(
-  `SELECT id, ladder_rank, rating, rd, vol, wins, losses, matches_played
-   FROM players
-   WHERE id IN (?, ?)`,
-  [winnerId, loserId]
-);
+      
 
-if (playerRows.length !== 2) {
-  throw new Error('Winner or Loser not found in the ladder.');
-}
-
-const winnerRow = playerRows.find((p) => p.id === winnerId);
-const loserRow  = playerRows.find((p) => p.id === loserId);
-
-const winnerOldRank = parseInt(winnerRow.ladder_rank, 10);
-const loserOldRank  = parseInt(loserRow.ladder_rank, 10);
-
-if (!Number.isInteger(winnerOldRank) || !Number.isInteger(loserOldRank)) {
-  throw new Error('Invalid ladder ranks in database.');
-}
-
-if (winnerOldRank === loserOldRank) {
-  throw new Error('Invalid ladder result: Winner and loser cannot have the same rank.');
-}
-
-// 1) Actualizar rating/RD/vol con Glicko-2 (winner=1, loser=0)
-const winnerNew = glicko2UpdateSingle(winnerRow, loserRow, 1);
-const loserNew  = glicko2UpdateSingle(loserRow, winnerRow, 0);
-
-// 2) Guardar nuevos valores + stats
-await conn.query(
-  `
-  UPDATE players
-  SET rating = ?, rd = ?, vol = ?,
-      wins = COALESCE(wins,0) + 1,
-      matches_played = COALESCE(matches_played,0) + 1
-  WHERE id = ?
-  `,
-  [winnerNew.rating, winnerNew.rd, winnerNew.vol, winnerId]
-);
-
-await conn.query(
-  `
-  UPDATE players
-  SET rating = ?, rd = ?, vol = ?,
-      losses = COALESCE(losses,0) + 1,
-      matches_played = COALESCE(matches_played,0) + 1
-  WHERE id = ?
-  `,
-  [loserNew.rating, loserNew.rd, loserNew.vol, loserId]
-);
-
-// 3) Recalcular ladder_rank por rating (Rank real)
-const [rankRows] = await conn.query(
-  `
-  SELECT id
-  FROM players
-  ORDER BY
-    COALESCE(rating,1500) DESC,
-    COALESCE(rd,350) ASC,
-    COALESCE(wins,0) DESC,
-    COALESCE(matches_played,0) DESC,
-    id ASC
-  `
-);
+      if (winnerCurrentRank === loserCurrentRank) {
+        throw new Error(
+          'Invalid ladder result: Winner and loser cannot have the same rank.'
+        );
+      }
+      
+      const winnerOldRank = winnerCurrentRank;
+const loserOldRank  = loserCurrentRank;
 
 let winnerNewRank = winnerOldRank;
 let loserNewRank  = loserOldRank;
 
-for (let i = 0; i < rankRows.length; i++) {
-  const pid = rankRows[i].id;
-  const newRank = i + 1;
-
-  await conn.query('UPDATE players SET ladder_rank = ? WHERE id = ?', [newRank, pid]);
-
-  if (pid === winnerId) winnerNewRank = newRank;
-  if (pid === loserId) loserNewRank = newRank;
-}
-
+/*
+  Regla:
+  - Si el winner ya estaba arriba (rank menor), NO cambia la ladder.
+  - Si el winner estaba abajo (rank mayor), el winner sube al rank del loser
+    y todos entre medio bajan 1.
+*/
+if (winnerCurrentRank > loserCurrentRank) {
+  // Baja 1 posición a todos los que estaban entre loserRank y winnerRank-1
+  await conn.query(
+    `
+    UPDATE players
+    SET ladder_rank = ladder_rank + 1
+    WHERE ladder_rank >= ? AND ladder_rank < ?
+    `,
+    [loserCurrentRank, winnerCurrentRank]
+  );
 
   // Winner toma el lugar del loser
   await conn.query(
