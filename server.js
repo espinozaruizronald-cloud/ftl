@@ -960,6 +960,7 @@ app.get('/ladder', async (req, res) => {
       'SELECT * FROM players ORDER BY ladder_rank ASC'
     );
 
+
     const loggedIn = isLoggedIn(req);
 
     const locationOptions = ALLOWED_LOCATIONS
@@ -1198,7 +1199,14 @@ app.get('/ladder', async (req, res) => {
             <div class="left-column">
               <div class="card">
                 <h1 class="page-title">Report Match</h1>
+                ${loggedIn ? '' : `
+                  <div class="note" style="margin-bottom:10px; padding:10px; border:1px solid #e5e7eb; border-radius:10px;">
+                    <b>Login required</b> to report a match.
+                    <div style="margin-top:6px;"><a href="/login?next=/ladder">Go to Login</a></div>
+                  </div>
+                `}
                 <form method="POST" action="/report-match">
+
                   <div class="form-field">
                     <label for="match_date">Match Date</label>
                     <input type="date" id="match_date" name="match_date" required>
@@ -1270,7 +1278,7 @@ app.get('/ladder', async (req, res) => {
                   </div>
 
                   <div class="buttons-row">
-                    <button type="submit" class="btn-primary">Accept</button>
+                    <button type="submit" class="btn-primary" ${loggedIn ? '' : 'disabled'}>Accept</button>
                   </div>
                 </form>
               </div>
@@ -1333,8 +1341,18 @@ app.get('/ladder', async (req, res) => {
   }
 });
 
+function requireLogin(req, res, next) {
+  const loggedIn = Boolean(req.session && req.session.userId);
+  if (loggedIn) return next();
+
+  // Si alguien intenta hacer POST sin sesión, lo mandamos a login.
+  // (puedes quitar el ?next si tu login no lo usa)
+  return res.redirect('/login?next=/ladder');
+}
+
+
 // ---------- REPORT MATCH ----------
-app.post('/report-match', async (req, res) => {
+app.post('/report-match', requireLogin, async (req, res) => {
   try {
     const {
       match_date,
