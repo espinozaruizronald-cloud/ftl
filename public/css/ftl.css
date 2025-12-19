@@ -1,0 +1,175 @@
+:root{
+  --green:#215e21;
+  --greenDark:#174816;
+  --greenSoft:#e5f5e5;
+  --bg:#f3f4f6;
+  --text:#111827;
+  --muted:#4b5563;
+  --border:#e5e7eb;
+  --shadow: 0 10px 25px rgba(15, 23, 42, 0.10);
+  --radius: 14px;
+}
+
+*{ box-sizing:border-box; }
+body{
+  margin:0;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+a{ color: var(--green); text-decoration:none; }
+a:hover{ text-decoration:underline; }
+
+.main{
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.card{
+  background:#fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 18px 16px;
+}
+
+.hstack{ display:flex; align-items:center; gap:12px; }
+.stack{ display:flex; flex-direction:column; gap:12px; }
+.muted{ color: var(--muted); }
+
+/* Header / Hero */
+.site-header{
+  position:relative;
+  background: url('/images/bg002.jpg') no-repeat center center / cover;
+  color:#fff;
+}
+.site-header .overlay{
+  position:absolute; inset:0;
+  background: linear-gradient(180deg, rgba(0,0,0,.45), rgba(0,0,0,.25));
+}
+.site-header .inner{
+  position:relative;
+  max-width:980px;
+  margin:0 auto;
+  padding: 18px 16px;
+  display:flex;
+  align-items:center;
+  gap: 12px;
+}
+.logo{
+  width:64px; height:64px;
+  border-radius:999px;
+  border: 2px solid #fff;
+  background:#fff;
+  object-fit:contain;
+}
+.brand h1{
+  margin:0;
+  font-size: 1.55rem;
+  letter-spacing: .02em;
+  color: var(--greenSoft);
+}
+.brand .sub{
+  margin-top:2px;
+  font-size:.92rem;
+  color:#e5e7eb;
+  font-style: italic;
+}
+
+/* Home hero spacing */
+.hero-pad{ padding-bottom: 74px; }
+.hero-pull{
+  margin-top: -52px;
+  padding-bottom: 22px;
+}
+
+/* Buttons */
+.btn-row{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  margin-top: 16px;
+}
+@media (min-width: 640px){
+  .btn-row{ flex-direction:row; }
+}
+.btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-weight: 650;
+  font-size: .92rem;
+  cursor:pointer;
+  min-width: 180px;
+  transition: transform .05s ease, background .18s ease, border-color .18s ease, color .18s ease;
+}
+.btn:hover{ transform: translateY(-1px); text-decoration:none; }
+.btn:focus{ outline: none; box-shadow: 0 0 0 3px rgba(33,94,33,.20); }
+
+.btn-primary{ background: var(--green); color:#fff; border-color: var(--green); }
+.btn-primary:hover{ background: var(--greenDark); border-color: var(--greenDark); }
+
+.btn-outline{ background:#fff; color: var(--green); border-color: var(--green); }
+.btn-outline:hover{ background:#ecfdf3; border-color: var(--greenDark); }
+
+.btn-secondary{ background:#e5e7eb; color: var(--text); border-color:#d1d5db; }
+.btn-secondary:hover{ background:#d1d5db; }
+
+/* Forms */
+.form-field{ display:flex; flex-direction:column; gap:4px; margin-bottom: 12px; }
+label{ font-size: .86rem; font-weight: 650; color:#374151; }
+input, select{
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: 1px solid #d1d5db;
+  font-size: .95rem;
+  outline:none;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+input:focus, select:focus{
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px rgba(33,94,33,.14);
+}
+.note{ font-size:.82rem; color:#6b7280; margin-top: 4px; }
+
+/* Tables */
+.table-wrap{
+  margin-top: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  overflow-x:auto;
+  background:#fff;
+}
+table{
+  width:100%;
+  border-collapse: collapse;
+  font-size: .9rem;
+  min-width: 760px; /* mejora mobile */
+}
+thead{ background: var(--green); color:#fff; }
+th, td{ padding: 9px 10px; text-align:left; border-bottom: 1px solid var(--border); }
+tbody tr:nth-child(even){ background:#f9fafb; }
+
+.footer{
+  margin-top: 14px;
+  text-align:center;
+  font-size:.72rem;
+  color:#6b7280;
+  font-weight: 700;
+}
+
+/* Layout for Ladder page */
+.two-col{
+  display:flex;
+  flex-direction:column;
+  gap:16px;
+}
+@media (min-width: 900px){
+  .two-col{ flex-direction:row; align-items:flex-start; }
+  .col{ flex:1; min-width: 320px; }
+}
