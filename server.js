@@ -183,26 +183,232 @@ function safeNext(next) {
 // ---------- SIGNUP ----------
 app.get('/signup', (req, res) => {
   const next = safeNext(req.query.next);
-  res.send(`
+
+  const err = String(req.query.err || '');
+  const msg =
+    err === '1' ? 'Invalid email. Please enter a valid email.' :
+    err === '2' ? 'Password must be at least 8 characters.' :
+    err === '3' ? 'Email already registered. Please login.' :
+    err === '4' ? 'Error creating account. Please try again.' :
+    '';
+
+  const html = `
     <!doctype html>
-    <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Create Account</title></head>
-    <body style="font-family:Arial;margin:24px;">
-      <h2>Create Account</h2>
-      <form method="POST" action="/signup?next=${encodeURIComponent(next)}">
-        <div style="margin-bottom:10px;">
-          <label>Email</label><br>
-          <input name="email" type="email" required style="padding:8px;width:320px;max-width:100%;">
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Create Account - FTL</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <style>
+        :root {
+          --hunter-green: #215e21;
+          --hunter-green-dark: #174816;
+        }
+        body {
+          margin: 0;
+          font-family: Arial, sans-serif;
+          background: #f3f4f6;
+        }
+        .site-header {
+          background-image: url('/images/bg002.jpg');
+          background-size: cover;
+          background-position: center;
+          padding: 12px 20px;
+        }
+        .header-inner {
+          max-width: 960px;
+          margin: 0 auto;
+          display: flex;
+          align-items: center;
+          gap: 16px;
+        }
+        .header-logo-wrapper {
+          background: #ffffff;
+          border-radius: 14px;
+          padding: 4px 6px;
+          box-shadow: 0 3px 8px rgba(0,0,0,0.25);
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .header-logo {
+          width: 64px;
+          height: auto;
+        }
+        .header-text-main h1 {
+          margin: 0;
+          font-size: 1.6rem;
+          color: var(--hunter-green);
+        }
+        .header-subtitle {
+          font-size: 0.85rem;
+          color: var(--hunter-green);
+          margin-top: 2px;
+        }
+
+        .main {
+          max-width: 960px;
+          margin: 20px auto;
+          padding: 0 16px 24px;
+        }
+        .container {
+          max-width: 420px;
+          width: 100%;
+          background: #ffffff;
+          border-radius: 10px;
+          padding: 20px 18px 24px;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+          margin: 0 auto;
+        }
+        h2 {
+          margin-top: 0;
+          margin-bottom: 10px;
+          font-size: 1.3rem;
+          text-align: center;
+        }
+        p {
+          font-size: 0.85rem;
+          color: #4b5563;
+          text-align: center;
+          margin-bottom: 16px;
+        }
+        .form-field {
+          display: flex;
+          flex-direction: column;
+          margin-bottom: 10px;
+        }
+        .form-field label {
+          font-weight: bold;
+          margin-bottom: 4px;
+          font-size: 0.9rem;
+        }
+        .form-field input {
+          padding: 6px;
+          font-size: 0.9rem;
+        }
+
+        .alert {
+          margin: 0 auto 12px;
+          padding: 10px 12px;
+          border-radius: 10px;
+          border: 1px solid #fca5a5;
+          background: #fef2f2;
+          color: #991b1b;
+          font-size: 0.85rem;
+          text-align: center;
+        }
+
+        .buttons {
+          margin-top: 14px;
+          display: flex;
+          gap: 8px;
+        }
+        .buttons button,
+        .buttons a {
+          flex: 1;
+        }
+        button {
+          width: 100%;
+          padding: 8px 0;
+          border-radius: 999px;
+          border: none;
+          font-size: 0.9rem;
+          font-weight: 600;
+          cursor: pointer;
+          transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+        }
+        .btn-primary {
+          background: var(--hunter-green);
+          color: #ffffff;
+        }
+        .btn-primary:hover {
+          background: var(--hunter-green-dark);
+        }
+        .btn-secondary {
+          background: #e5e7eb;
+          color: #111827;
+        }
+        .btn-secondary:hover {
+          background: #d1d5db;
+        }
+
+        .footer-link {
+          margin-top: 14px;
+          font-size: 0.85rem;
+          text-align: center;
+          color: #4b5563;
+        }
+        .footer-link a {
+          color: #2563eb;
+          text-decoration: none;
+        }
+        .footer-link a:hover {
+          text-decoration: underline;
+        }
+
+        .signature {
+          margin-top: 8px;
+          font-size: 0.7rem;
+          color: #6b7280;
+          font-weight: bold;
+          text-align: center;
+        }
+      </style>
+    </head>
+    <body>
+      <header class="site-header">
+        <div class="header-inner">
+          <div class="header-logo-wrapper">
+            <img src="/images/FTL01.png" alt="Fayetteville Tennis Ladder logo" class="header-logo">
+          </div>
+          <div class="header-text-main">
+            <h1>Fayetteville Tennis Ladder</h1>
+            <div class="header-subtitle">
+              Players from Fayetteville and surrounding areas
+            </div>
+          </div>
         </div>
-        <div style="margin-bottom:10px;">
-          <label>Password</label><br>
-          <input name="password" type="password" required minlength="8" style="padding:8px;width:320px;max-width:100%;">
+      </header>
+
+      <main class="main">
+        <div class="container">
+          <h2>Create Account</h2>
+          <p>Create an account to report matches and view phone numbers.</p>
+
+          ${msg ? `<div class="alert">${msg}</div>` : ``}
+
+          <form method="POST" action="/signup?next=${encodeURIComponent(next)}">
+            <div class="form-field">
+              <label for="email">Email</label>
+              <input id="email" name="email" type="email" required autocomplete="email" placeholder="your@email.com">
+            </div>
+
+            <div class="form-field">
+              <label for="password">Password</label>
+              <input id="password" name="password" type="password" required minlength="8" autocomplete="new-password" placeholder="min 8 characters">
+            </div>
+
+            <div class="buttons">
+              <button type="submit" class="btn-primary">Create</button>
+              <a href="${next}" style="text-decoration:none;">
+                <button type="button" class="btn-secondary">Cancel</button>
+              </a>
+            </div>
+          </form>
+
+          <div class="footer-link">
+            Already have an account?
+            <a href="/login?next=${encodeURIComponent(next)}">Login</a>
+          </div>
+
+          <div class="signature">Created by RER</div>
         </div>
-        <button type="submit" style="padding:10px 14px;">Create</button>
-        <a href="/login?next=${encodeURIComponent(next)}" style="margin-left:10px;">I already have an account</a>
-      </form>
-    </body></html>
-  `);
+      </main>
+    </body>
+    </html>
+  `;
+
+  res.send(html);
 });
 
 app.post('/signup', async (req, res) => {
@@ -211,11 +417,22 @@ app.post('/signup', async (req, res) => {
     const email = (req.body.email || '').trim().toLowerCase();
     const password = (req.body.password || '').trim();
 
-    if (!email) return res.status(400).send('Email is required.');
-    if (password.length < 8) return res.status(400).send('Password must be at least 8 characters.');
+    // Validaciones (backend)
+    if (!email || !email.includes('@')) {
+      return res.redirect(`/signup?next=${encodeURIComponent(next)}&err=1`);
+    }
+    if (!password || password.length < 8) {
+      return res.redirect(`/signup?next=${encodeURIComponent(next)}&err=2`);
+    }
 
-    const [[existing]] = await pool.query('SELECT id FROM users WHERE email = ? LIMIT 1', [email]);
-    if (existing) return res.status(409).send('Email already registered.');
+    // ¿Existe ya?
+    const [rows] = await pool.query(
+      'SELECT id FROM users WHERE email = ? LIMIT 1',
+      [email]
+    );
+    if (rows.length) {
+      return res.redirect(`/signup?next=${encodeURIComponent(next)}&err=3`);
+    }
 
     const id = crypto.randomUUID();
     const passwordHash = await bcrypt.hash(password, 12);
@@ -231,9 +448,11 @@ app.post('/signup', async (req, res) => {
     res.redirect(next);
   } catch (err) {
     console.error(err);
-    res.status(500).send('Error creating account.');
+    const next = safeNext(req.query.next);
+    return res.redirect(`/signup?next=${encodeURIComponent(next)}&err=4`);
   }
 });
+
 
 // ---------- LOGIN ----------
 app.get('/login', (req, res) => {
