@@ -1141,7 +1141,32 @@ app.get('/ladder', async (req, res) => {
             background: var(--hunter-green-dark);
             transform: translateY(-1px);
           }
-          .table-wrapper {
+
+                    /* Disabled state for Accept (when user is NOT logged in) */
+          form[action="/report-match"] button.btn-primary:disabled,
+          form[action="/report-match"] button.btn-primary[disabled]{
+            background: #9ca3af !important;
+            background-color: #9ca3af !important;
+            border-color: #9ca3af !important;
+            color: #ffffff !important;
+            cursor: not-allowed !important;
+            opacity: 0.60 !important;
+            box-shadow: none !important;
+            transform: none !important;
+            filter: grayscale(20%) !important;
+            pointer-events: none !important;
+          }
+
+          form[action="/report-match"] button.btn-primary:disabled:hover,
+          form[action="/report-match"] button.btn-primary[disabled]:hover,
+          form[action="/report-match"] button.btn-primary:disabled:active,
+          form[action="/report-match"] button.btn-primary[disabled]:active{
+            background: #9ca3af !important;
+            background-color: #9ca3af !important;
+            transform: none !important;
+            filter: none !important;
+          }
+.table-wrapper {
             margin-top: 8px;
             border-radius: 12px;
             border: 1px solid var(--border-soft);
@@ -1202,10 +1227,10 @@ app.get('/ladder', async (req, res) => {
                 ${loggedIn ? '' : `
                   <div class="note" style="margin-bottom:10px; padding:10px; border:1px solid #e5e7eb; border-radius:10px;">
                     <b>Login required</b> to report a match.
-                    <div style="margin-top:6px;"><a href="/login?next=/ladder">Go to Login</a></div>
+                    <div style="margin-top:6px;"><a href="/login?next=/ladder"><b>"Go to Login"</b></a></div>
                   </div>
                 `}
-                <form method="POST" action="/report-match">
+                <form id="reportMatchForm" method="POST" action="/report-match">
 
                   <div class="form-field">
                     <label for="match_date">Match Date</label>
@@ -1278,7 +1303,7 @@ app.get('/ladder', async (req, res) => {
                   </div>
 
                   <div class="buttons-row">
-                    <button type="submit" class="btn-primary" ${loggedIn ? '' : 'disabled'}>Accept</button>
+                    <button type="submit" class="btn-primary" ${loggedIn ? '' : 'disabled style="background:#9ca3af !important; border-color:#9ca3af !important; color:#fff !important; cursor:not-allowed !important; opacity:0.6 !important; box-shadow:none !important;"'}>Accept</button>
                   </div>
                 </form>
               </div>
