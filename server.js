@@ -1760,7 +1760,7 @@ app.get('/ladder', async (req, res) => {
                     ${players
                       .map((p) => {
                         const phoneCell = !loggedIn
-                          ? `<a href="/login?next=/ladder">Login to view</a>`
+                          ? '***-***-****'
                           : (Number(p.phone_consent) === 1 ? (p.phone || '') : '(private)');
 
 
